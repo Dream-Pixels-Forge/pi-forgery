@@ -1,0 +1,31 @@
+{
+  "name": "pi-forgery",
+  "version": "0.1.0",
+  "description": "Improved pi-fabric reimplementation for Pi: one programmable forgery_exec tool, one-shot agents, a live activity widget, a status-line footer, and a /forgery dashboard.",
+  "type": "module",
+  "main": "extensions/forgery/index.ts",
+  "scripts": {
+    "typecheck": "cd extensions/forgery && npx tsc --noEmit --skipLibCheck",
+    "build": "cd extensions/forgery && npx tsc --noEmit",
+    "test": "cd extensions/forgery && npx tsx --test tests/*.test.ts"
+  },
+  "keywords": [
+    "pi-agent",
+    "extension",
+    "pi-forgery",
+    "pi-fabric",
+    "codemode",
+    "agents",
+    "dashboard",
+    "statusline"
+  ],
+  "author": "Dream Pixels Forge",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./extensions/forgery/index.ts"
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
