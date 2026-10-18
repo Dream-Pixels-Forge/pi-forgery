@@ -22,6 +22,7 @@ import { ForgeryDashboard } from "./dashboard.js";
 import { ForgeryFooter, type ForgeryFooterContext } from "./footer.js";
 import { ForgeryWidget, type ForgeryWidgetInteraction } from "./widget.js";
 import { formatCost, formatDuration, formatTokens, statusGlyph } from "./format.js";
+import { GitBranchReader } from "../git.js";
 
 const REFRESH_MS = 100;
 const STATUS_KEY = "forgery";
@@ -50,6 +51,7 @@ export class ForgeryUiController {
   private unsubscribeAgents?: () => void;
   private started = false;
   private hostCalls: string[];
+  private gitBranchReader: GitBranchReader;
 
   constructor(
     store: ForgeryActivityStore,
@@ -60,6 +62,7 @@ export class ForgeryUiController {
     this.store = store;
     this.runner = runner;
     this.hostCalls = hostCalls;
+    this.gitBranchReader = new GitBranchReader();
     this.options = {
       maxRows: options.maxRows ?? 8,
       retainMs: options.retainMs ?? 30_000,
@@ -231,12 +234,7 @@ export class ForgeryUiController {
   #mountFooter(ctx: ExtensionContext): void {
     if (!this.options.footer || !this.ui) return;
     const footerCtx: ForgeryFooterContext = {
-      gitBranch: () => {
-        // The host FooterDataProvider is not exposed to extensions in this
-        // increment. We report "no-repo" unless a host exposes it — data
-        // honesty, no fabricated branch names.
-        return null;
-      },
+      gitBranch: () => this.gitBranchReader.getBranch(),
       contextPercent: () => ctx.getContextUsage()?.percent ?? null,
       contextTokens: () => ctx.getContextUsage()?.tokens ?? null,
       modelId: () => (ctx.model as { id?: string } | undefined)?.id,

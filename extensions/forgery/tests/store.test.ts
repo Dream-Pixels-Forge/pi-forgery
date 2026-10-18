@@ -74,7 +74,7 @@ test("store: snapshot includes active totals", () => {
   const store = new ForgeryActivityStore();
   store.start("run-1");
   store.beginCall("run-1", "c1", "agents.run", { task: "x" });
-  store.updateCall("run-1", "c1", { type: "metrics", metrics: { tokens: 1234, cost: 0.42 } });
+  store.updateCall("run-1", "c1", { type: "metrics", metrics: { tokens: 1234, toolCalls: 1, cost: 0.42 } });
   const snap = store.snapshot();
   assert.equal(snap.activeRunId, "run-1");
   assert.equal(snap.activeTotals?.calls, 1);
