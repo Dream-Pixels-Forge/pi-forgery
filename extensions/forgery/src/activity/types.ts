@@ -59,9 +59,9 @@ export interface ForgeryActivityEventInput {
 }
 
 export interface ForgeryActivityMetrics {
-  tokens?: number;
-  toolCalls?: number;
-  cost?: number;
+  tokens: number;
+  toolCalls: number;
+  cost: number;
 }
 
 export interface ForgeryPhase {
@@ -134,6 +134,10 @@ export interface ForgeryRun {
   updatedAt: number;
   finishedAt?: number;
   error?: string;
+  /** Working directory of the run. */
+  cwd: string;
+  /** Accumulated metrics for this run. */
+  metrics?: ForgeryActivityMetrics;
 }
 
 /** A one-shot agent run observed in the activity store. */

@@ -42,7 +42,7 @@ test("ForgeryFooter: renders active run metrics", () => {
   store.beginCall("run-1", "c1", "pi.read", { path: "a.ts" });
   store.updateCall("run-1", "c1", {
     type: "metrics",
-    metrics: { tokens: 1234, cost: 0.42 },
+    metrics: { tokens: 1234, toolCalls: 1, cost: 0.42 },
   });
 
   const footerCtx: ForgeryFooterContext = {

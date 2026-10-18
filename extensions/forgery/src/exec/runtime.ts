@@ -18,6 +18,7 @@
 
 import type { TSchema, Static } from "typebox";
 import type { ForgeryActivityStore } from "../activity/store.js";
+import type { ForgeryActivityMetrics } from "../activity/types.js";
 import { safeJson, safeText } from "../ui/format.js";
 
 /** A validated host call descriptor. */
@@ -49,7 +50,7 @@ export interface HostExecCtx {
 export interface HostExecResult {
   value?: unknown;
   error?: string;
-  metrics?: { tokens?: number; toolCalls?: number; cost?: number };
+  metrics?: ForgeryActivityMetrics;
   /** Short human-readable preview for the activity row. */
   preview?: string;
 }
@@ -289,7 +290,7 @@ export async function runForgery(
   ctx: HostExecCtx,
   signal: AbortSignal,
 ): Promise<ForgeryExecOutcome> {
-  store.start(ctx.runId, undefined);
+  store.start(ctx.runId, undefined, undefined, ctx.cwd);
   const result = await runProgram(code, registry, ctx, signal);
   if (result.ok) {
     store.finish(ctx.runId, true);

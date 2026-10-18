@@ -9,6 +9,7 @@ import type {
   ForgeryRun,
   ForgeryRunDisplay,
   ForgerySnapshot,
+  ForgeryActivityMetrics,
 } from "./types.js";
 
 /** Bounded collection sizes so a long session cannot grow the store unboundedly. */
@@ -41,14 +42,14 @@ export class ForgeryActivityStore {
 
   // ── lifecycle ──────────────────────────────────────────────────────────
 
-  start(runId: string, display?: ForgeryRunDisplay, nameHint?: string): ForgeryRun {
+  start(runId: string, display?: ForgeryRunDisplay, nameHint?: string, cwd?: string): ForgeryRun {
     const existing = this.#runs.get(runId);
     if (existing) {
       if (display?.name) existing.name = display.name;
       if (display?.description) existing.description = display.description;
       if (existing.status === "running") return existing;
       // Restart a finished run as a fresh one (same id reused by the tool).
-      this.#replaceRun(runId, display, nameHint);
+      this.#replaceRun(runId, display, nameHint, cwd);
       return this.#runs.get(runId)!;
     }
     const run: ForgeryRun = {
@@ -62,6 +63,8 @@ export class ForgeryActivityStore {
       events: [],
       startedAt: now(),
       updatedAt: now(),
+      cwd: cwd ?? "",
+      metrics: { toolCalls: 0, tokens: 0, cost: 0 },
     };
     this.#runs.set(runId, run);
     this.#order.push(runId);
@@ -70,7 +73,7 @@ export class ForgeryActivityStore {
     return run;
   }
 
-  #replaceRun(runId: string, display: ForgeryRunDisplay | undefined, nameHint: string | undefined): void {
+  #replaceRun(runId: string, display: ForgeryRunDisplay | undefined, nameHint: string | undefined, cwd?: string): void {
     const t = now();
     const run: ForgeryRun = {
       id: runId,
@@ -83,6 +86,8 @@ export class ForgeryActivityStore {
       events: [],
       startedAt: t,
       updatedAt: t,
+      cwd: cwd ?? "",
+      metrics: { toolCalls: 0, tokens: 0, cost: 0 },
     };
     this.#runs.set(runId, run);
   }
@@ -237,7 +242,18 @@ export class ForgeryActivityStore {
     if (result.result !== undefined) call.result = result.result;
     if (result.preview !== undefined) call.preview = result.preview;
     if (result.error !== undefined) call.error = result.error;
-    if (result.metrics !== undefined) call.metrics = result.metrics;
+    if (result.metrics !== undefined) {
+      call.metrics = result.metrics;
+      // Accumulate metrics into the run's totals.
+      if (!run.metrics) {
+        run.metrics = { toolCalls: 0, tokens: 0, cost: 0 };
+      }
+      // At this point, run.metrics is definitely defined
+      const metrics = run.metrics as Required<ForgeryActivityMetrics>;
+      metrics.toolCalls += result.metrics.toolCalls ?? 0;
+      metrics.tokens += result.metrics.tokens ?? 0;
+      metrics.cost += result.metrics.cost ?? 0;
+    }
     if (call.detail === undefined && result.preview !== undefined) {
       call.detail = result.preview;
     }

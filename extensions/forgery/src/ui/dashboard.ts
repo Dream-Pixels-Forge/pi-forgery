@@ -142,6 +142,28 @@ export class ForgeryDashboard implements Component, Focusable {
       );
     }
 
+    // Call list (most recent first).
+    const calls = focus.calls.slice(Math.max(0, focus.calls.length - 12)).reverse();
+    if (calls.length > 0) {
+      lines.push("");
+      lines.push(theme.fg("muted", `calls (${calls.length})`));
+      calls.forEach((call) => {
+        const prefix = " ";
+        const glyph = colorStatus(theme, call.status);
+        const refPart = theme.fg("text", call.ref);
+        const labelPart = theme.fg("dim", truncate(call.label ?? "", 20));
+        const statusPart = theme.fg("dim", ` · ${call.status}`);
+        let extraPart = "";
+        if (call.preview) {
+          extraPart = ` ${theme.fg("dim", truncate(call.preview, 20))}`;
+        } else if (call.error) {
+          extraPart = ` ${theme.fg("error", truncate(call.error, 20))}`;
+        }
+        const line = `${prefix} ${glyph} ${refPart} ${labelPart}${statusPart}${extraPart}`;
+        lines.push(line);
+      });
+    }
+
     // Entity list (agents).
     const entities = this.#filteredAgents(snap.agents, this.filter);
     lines.push("");

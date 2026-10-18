@@ -15,6 +15,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, resolve as pathResolve } from "node:path";
 import { Type } from "typebox";
 import {
@@ -43,6 +44,7 @@ import {
   PiRead,
   PiWrite,
 } from "./schemas.js";
+import { loadConfig, type ForgeryConfig } from "../config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +68,9 @@ export function makeRegistry(
 ): HostCallRegistry {
   const registry = new HostCallRegistry();
 
+  // Load config for guardrail policies
+  const config = liveCtx ? loadConfig(liveCtx.cwd) : undefined;
+
   // Shared exec helper (node:child_process — `ctx.exec` is not part of the
   // public ExtensionContext API).
   const execViaHost = async (command: string, args: string[], signal: AbortSignal, cwd: string) => {
@@ -84,6 +89,27 @@ export function makeRegistry(
     }
   };
 
+  // Helper to check if a bash command is destructive
+  const isDestructiveBashCommand = (command: string): boolean => {
+    const destructivePatterns = [
+      /\brm\s/,           // rm command
+      /\bsudo\s/,         // sudo command
+      /\bforce\s*[-_]?push/, // force push
+      /\bdd\s/,           // dd command
+      /\bmkfs\s/,         // mkfs command
+      /\bfdisk\s/,        // fdisk command
+      /\bparted\s/,       // parted command
+      /\b>:?\s*\/dev\//,  // writing to device files
+      /\b>\s*\/etc\//,    // writing to /etc
+      /\b>\s*\/usr\//,    // writing to /usr
+      /\b>\s*\/bin\//,    // writing to /bin
+      /\b>\s*\/sbin\//,   // writing to /sbin
+      /\bchmod\s+-R\s/,   // recursive chmod
+      /\bchown\s+-R\s/,   // recursive chown
+    ];
+    return destructivePatterns.some(pattern => pattern.test(command));
+  };
+
   registry.register({
     ref: "pi.bash",
     schema: PiBash,
@@ -91,6 +117,25 @@ export function makeRegistry(
     execute: async (args, _hctx, signal) => {
       if (!liveCtx) return { error: "no host context" };
       const command = String(args.command ?? "");
+      
+      // Check if this is a destructive bash command
+      if (isDestructiveBashCommand(command)) {
+        const bashPolicy = config?.guardrails?.bashPolicy ?? "off";
+        
+        // Handle guardrail policies
+        if (bashPolicy === "block") {
+          return { error: `bash command blocked by guardrails policy: ${command}` };
+        }
+        
+        if (bashPolicy === "confirm") {
+          const confirm = Boolean(args.confirm);
+          if (!confirm) {
+            return { error: `bash command requires confirmation due to guardrails policy. Set confirm: true to proceed: ${command}` };
+          }
+        }
+        // If policy is "off" or confirm is true, proceed
+      }
+      
       return execViaHost("sh", ["-c", command], signal, liveCtx.cwd);
     },
   });
@@ -131,6 +176,23 @@ export function makeRegistry(
       if (!liveCtx) return { error: "no host context" };
       const path = String(args.path ?? "");
       const content = String(args.content ?? "");
+      
+      // Check write guardrail policy
+      const writePolicy = config?.guardrails?.writePolicy ?? "off";
+      
+      // Handle guardrail policies
+      if (writePolicy === "block") {
+        return { error: `write operation blocked by guardrails policy: ${path}` };
+      }
+      
+      if (writePolicy === "confirm") {
+        const confirm = Boolean(args.confirm);
+        if (!confirm) {
+          return { error: `write operation requires confirmation due to guardrails policy. Set confirm: true to proceed: ${path}` };
+        }
+      }
+      // If policy is "off" or confirm is true, proceed
+      
       try {
         const full = resolvePath(liveCtx.cwd, path);
         fsWrite(full, content);
@@ -151,6 +213,23 @@ export function makeRegistry(
       const oldStr = String(args.old_string ?? "");
       const newStr = String(args.new_string ?? "");
       const replaceAll = Boolean(args.replace_all);
+      
+      // Check write guardrail policy (edit is also a write operation)
+      const writePolicy = config?.guardrails?.writePolicy ?? "off";
+      
+      // Handle guardrail policies
+      if (writePolicy === "block") {
+        return { error: `edit operation blocked by guardrails policy: ${path}` };
+      }
+      
+      if (writePolicy === "confirm") {
+        const confirm = Boolean(args.confirm);
+        if (!confirm) {
+          return { error: `edit operation requires confirmation due to guardrails policy. Set confirm: true to proceed: ${path}` };
+        }
+      }
+      // If policy is "off" or confirm is true, proceed
+      
       try {
         const full = resolvePath(liveCtx.cwd, path);
         const text = fsRead(full);
@@ -214,6 +293,37 @@ export function makeRegistry(
     execute: async (args, hctx, _signal) => {
       const task = String(args.task ?? "");
       if (!task) return { error: "agents.run: task is required" };
+
+      // Budget enforcement: check if running this agent would exceed cost/token limits
+      try {
+        const config = loadConfig(hctx.cwd);
+        const run = activity.get(hctx.runId);
+        
+        // Get current accumulated usage for this run
+        const currentUsage = run?.metrics ?? { toolCalls: 0, tokens: 0, cost: 0 };
+        
+        // Check token limit
+        if (config.budget?.maxTokensPerRun !== undefined) {
+          // We don't know exact token usage in advance, so we'll check after execution
+          // but we can prevent execution if we're already over the limit
+          if (currentUsage.tokens >= config.budget.maxTokensPerRun) {
+            return { error: `agents.run: token budget exceeded (${currentUsage.tokens} >= ${config.budget.maxTokensPerRun})` };
+          }
+        }
+        
+        // Check cost limit
+        if (config.budget?.maxCostPerRun !== undefined) {
+          // We don't know exact cost in advance, so we'll check after execution
+          // but we can prevent execution if we're already over the limit
+          if (currentUsage.cost >= config.budget.maxCostPerRun) {
+            return { error: `agents.run: cost budget exceeded (${currentUsage.cost} >= ${config.budget.maxCostPerRun})` };
+          }
+        }
+      } catch (configError) {
+        // If we can't load config, log but continue execution
+        console.warn(`forgery: could not load config for budget enforcement: ${configError}`);
+      }
+
       const result = await runner.run({
         task,
         cwd: hctx.cwd,
@@ -225,6 +335,24 @@ export function makeRegistry(
       const agent = runner.get(result.id);
       if (agent) activity.addAgent(agent);
       const ok = result.status === "completed";
+      
+      // Update activity with metrics from the agent run
+      if (result.usage) {
+        const run = activity.get(hctx.runId);
+        if (run) {
+          // Initialize metrics if not present
+          if (!run.metrics) {
+            run.metrics = { toolCalls: 0, tokens: 0, cost: 0 };
+          }
+          // Accumulate usage from this agent run
+          // At this point, run.metrics is definitely defined
+          run.metrics.toolCalls += 1; // count agent run as one tool call? 
+          run.metrics.tokens += result.usage.output ?? 0; // Assuming output tokens
+          // Note: We don't have cost in the usage from runner.run, so we'll need to estimate
+          // For now, we'll leave cost as 0 or implement a rough estimation based on tokens
+        }
+      }
+      
       return {
         value: { id: result.id, status: result.status, text: result.text, usage: result.usage },
         preview: `${result.status} (${(result.text ?? "").slice(0, 40)})`,

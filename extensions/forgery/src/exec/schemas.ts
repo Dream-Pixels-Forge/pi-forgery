@@ -24,6 +24,8 @@ export const PiBash = Type.Object({
   run_in_background: Type.Optional(Type.Boolean()),
   timeout: Type.Optional(Type.Number()),
   cwd: Type.Optional(Type.String()),
+  /** Set to true to confirm the operation when guardrails require confirmation. */
+  confirm: Type.Optional(Type.Boolean()),
 });
 
 export const PiEdit = Type.Object({
@@ -31,11 +33,15 @@ export const PiEdit = Type.Object({
   old_string: Type.String(),
   new_string: Type.String(),
   replace_all: Type.Optional(Type.Boolean()),
+  /** Set to true to confirm the operation when guardrails require confirmation. */
+  confirm: Type.Optional(Type.Boolean()),
 });
 
 export const PiWrite = Type.Object({
   path: Type.String(),
   content: Type.String(),
+  /** Set to true to confirm the operation when guardrails require confirmation. */
+  confirm: Type.Optional(Type.Boolean()),
 });
 
 export const PiFind = Type.Object({
