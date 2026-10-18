@@ -3,8 +3,10 @@
 ## Current State
 - **Project:** pi-forgery
 - **Started:** 2026-06-15
-- **Current Phase:** 3 (Engineer)
-- **Status:** in-progress
+- **Current Phase:** 3 (Engineer) — complete, PR open for review
+- **Status:** in-progress (PR #1 awaiting review)
+- **Repo:** https://github.com/Dream-Pixels-Forge/pi-forgery
+- **PR:** https://github.com/Dream-Pixels-Forge/pi-forgery/pull/1
 
 ## Phase Completion
 - [x] Phase 0: Bootstrap (GOAL.md written)
