@@ -1,0 +1,440 @@
+/**
+ * pi-forgery — forgery_exec tool definition.
+ *
+ * The one programmable tool the LLM can call. It composes Pi core tools
+ * and one-shot agents inside a TypeScript program. Independent calls run
+ * in parallel; each call is recorded in the activity store.
+ */
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
+import { isAbsolute, resolve as pathResolve } from "node:path";
+import { Type } from "typebox";
+import {
+  defineTool,
+  type ExtensionContext,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
+import { ForgeryActivityStore } from "../activity/store.js";
+import { AgentRunner } from "../agents/runner.js";
+import {
+  HostCallRegistry,
+  runForgery,
+  type HostExecCtx,
+} from "./runtime.js";
+import {
+  AgentsList,
+  AgentsRun,
+  AgentsStop,
+  PiBash,
+  PiEdit,
+  PiExec,
+  PiFind,
+  PiGrep,
+  PiLs,
+  PiRead,
+  PiWrite,
+} from "./schemas.js";
+
+const execFileAsync = promisify(execFile);
+
+export interface ForgeryExecDetails {
+  runId: string;
+  calls: number;
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+}
+
+/**
+ * Build a fresh host-call registry with all the host calls wired up to the
+ * given runner/activity. This is re-used per tool invocation so we can
+ * scope `liveCtx` to the current `ExtensionContext`.
+ */
+export function makeRegistry(
+  runner: AgentRunner,
+  activity: ForgeryActivityStore,
+  liveCtx: ExtensionContext | undefined,
+): HostCallRegistry {
+  const registry = new HostCallRegistry();
+
+  // Shared exec helper (node:child_process — `ctx.exec` is not part of the
+  // public ExtensionContext API).
+  const execViaHost = async (command: string, args: string[], signal: AbortSignal, cwd: string) => {
+    const preview = `${command} ${args.join(" ")}`.slice(0, 80);
+    try {
+      const { stdout, stderr } = await execFileAsync(command, args, {
+        cwd,
+        signal,
+        maxBuffer: 50 * 1024 * 1024,
+        encoding: "utf-8",
+      });
+      return { value: { stdout, stderr, code: 0 }, preview };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return { error: message, preview };
+    }
+  };
+
+  registry.register({
+    ref: "pi.bash",
+    schema: PiBash,
+    kind: "tool",
+    execute: async (args, _hctx, signal) => {
+      if (!liveCtx) return { error: "no host context" };
+      const command = String(args.command ?? "");
+      return execViaHost("sh", ["-c", command], signal, liveCtx.cwd);
+    },
+  });
+
+  registry.register({
+    ref: "pi.exec",
+    schema: PiExec,
+    kind: "tool",
+    execute: async (args, _hctx, signal) => {
+      if (!liveCtx) return { error: "no host context" };
+      const command = String(args.command ?? "");
+      const argsArr = Array.isArray(args.args) ? (args.args as unknown[]).map(String) : [];
+      return execViaHost(command, argsArr, signal, liveCtx.cwd);
+    },
+  });
+
+  registry.register({
+    ref: "pi.read",
+    schema: PiRead,
+    kind: "tool",
+    execute: async (args) => {
+      if (!liveCtx) return { error: "no host context" };
+      const path = String(args.path ?? "");
+      try {
+        const text = fsRead(resolvePath(liveCtx.cwd, path));
+        return { value: text, preview: path };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  });
+
+  registry.register({
+    ref: "pi.write",
+    schema: PiWrite,
+    kind: "tool",
+    execute: async (args) => {
+      if (!liveCtx) return { error: "no host context" };
+      const path = String(args.path ?? "");
+      const content = String(args.content ?? "");
+      try {
+        const full = resolvePath(liveCtx.cwd, path);
+        fsWrite(full, content);
+        return { value: { ok: true, path: full }, preview: path };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  });
+
+  registry.register({
+    ref: "pi.edit",
+    schema: PiEdit,
+    kind: "tool",
+    execute: async (args) => {
+      if (!liveCtx) return { error: "no host context" };
+      const path = String(args.path ?? "");
+      const oldStr = String(args.old_string ?? "");
+      const newStr = String(args.new_string ?? "");
+      const replaceAll = Boolean(args.replace_all);
+      try {
+        const full = resolvePath(liveCtx.cwd, path);
+        const text = fsRead(full);
+        if (!text.includes(oldStr)) return { error: `old_string not found in ${path}` };
+        const updated = replaceAll ? text.split(oldStr).join(newStr) : text.replace(oldStr, newStr);
+        fsWrite(full, updated);
+        return { value: { ok: true, path: full }, preview: path };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  });
+
+  registry.register({
+    ref: "pi.ls",
+    schema: PiLs,
+    kind: "tool",
+    execute: async (args) => {
+      if (!liveCtx) return { error: "no host context" };
+      const path = String(args.path ?? ".");
+      try {
+        const full = resolvePath(liveCtx.cwd, path);
+        const entries = fsLs(full);
+        return { value: entries.join("\n"), preview: path };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  });
+
+  registry.register({
+    ref: "pi.find",
+    schema: PiFind,
+    kind: "tool",
+    execute: async (args) => {
+      if (!liveCtx) return { error: "no host context" };
+      const pattern = String(args.pattern ?? "");
+      const base = args.path ? resolvePath(liveCtx.cwd, String(args.path)) : liveCtx.cwd;
+      const results = findFiles(base, pattern);
+      return { value: results.join("\n"), preview: pattern };
+    },
+  });
+
+  registry.register({
+    ref: "pi.grep",
+    schema: PiGrep,
+    kind: "tool",
+    execute: async (args, _hctx, signal) => {
+      if (!liveCtx) return { error: "no host context" };
+      const pattern = String(args.pattern ?? "");
+      const base = args.path ? resolvePath(liveCtx.cwd, String(args.path)) : liveCtx.cwd;
+      const res = await execViaHost("grep", ["-rn", "--", pattern, base], signal, liveCtx.cwd);
+      return res;
+    },
+  });
+
+  registry.register({
+    ref: "agents.run",
+    schema: AgentsRun,
+    kind: "agent",
+    execute: async (args, hctx, _signal) => {
+      const task = String(args.task ?? "");
+      if (!task) return { error: "agents.run: task is required" };
+      const result = await runner.run({
+        task,
+        cwd: hctx.cwd,
+        name: "agent",
+        timeoutMs: args.timeoutMs ? Number(args.timeoutMs) : undefined,
+        model: args.model ? String(args.model) : undefined,
+        systemPrompt: args.systemPrompt ? String(args.systemPrompt) : undefined,
+      });
+      const agent = runner.get(result.id);
+      if (agent) activity.addAgent(agent);
+      const ok = result.status === "completed";
+      return {
+        value: { id: result.id, status: result.status, text: result.text, usage: result.usage },
+        preview: `${result.status} (${(result.text ?? "").slice(0, 40)})`,
+        error: ok ? undefined : result.error ?? result.status,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "agents.list",
+    schema: AgentsList,
+    kind: "agent",
+    execute: async () => ({ value: runner.listForUi() }),
+  });
+
+  registry.register({
+    ref: "agents.stop",
+    schema: AgentsStop,
+    kind: "agent",
+    execute: async (args) => ({ value: runner.stop(String(args.id ?? "")) }),
+  });
+
+  return registry;
+}
+
+// ── tiny node fs helpers ────────────────────────────────────────────────
+
+function resolvePath(cwd: string, p: string): string {
+  return isAbsolute(p) ? p : pathResolve(cwd, p);
+}
+function fsRead(p: string): string {
+  return readFileSync(p, "utf8");
+}
+function fsWrite(p: string, content: string): void {
+  mkdirSync(pathResolve(p, ".."), { recursive: true });
+  writeFileSync(p, content, "utf8");
+}
+function fsLs(dir: string): string[] {
+  return readdirSync(dir).map((n) => {
+    try {
+      const st = statSync(pathResolve(dir, n));
+      return `${st.isDirectory() ? "d" : "-"} ${n}`;
+    } catch {
+      return `- ${n}`;
+    }
+  });
+}
+
+/** Minimal recursive glob (no dependency). */
+function findFiles(base: string, pattern: string): string[] {
+  const MAX = 200;
+  const results: string[] = [];
+  const walk = (dir: string, rest: string, depth: number): void => {
+    if (results.length >= MAX || depth > 20) return;
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    if (rest === "" || rest === "**") {
+      for (const name of entries) {
+        const full = pathResolve(dir, name);
+        try {
+          if (statSync(full).isDirectory() && rest === "**") walk(full, "**", depth + 1);
+        } catch {
+          /* ignore */
+        }
+        results.push(full);
+      }
+      return;
+    }
+    const seg = rest.split("/")[0];
+    const rem = rest.includes("/") ? rest.split("/").slice(1).join("/") : "";
+    const re = new RegExp(
+      "^" +
+        seg
+          .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*\*/g, "\u0001")
+          .replace(/\*/g, ".*")
+          .replace(/\u0001/g, ".*") +
+        "$",
+    );
+    for (const name of entries) {
+      if (!re.test(name)) continue;
+      const full = pathResolve(dir, name);
+      try {
+        if (statSync(full).isDirectory()) {
+          if (rem === "" || rem === "**") results.push(full);
+          else walk(full, rem, depth + 1);
+        } else if (rem === "") {
+          results.push(full);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+  walk(base, pattern, 0);
+  return results.slice(0, MAX);
+}
+
+// ── the actual tool definition ──────────────────────────────────────────
+
+const PARAMS = Type.Object({
+  code: Type.String({
+    description:
+      "TypeScript program body that composes host tools. May call `pi.read`, `pi.bash`, `pi.edit`, `pi.write`, `pi.find`, `pi.grep`, `pi.ls`, `pi.exec`, `agents.run`, `agents.list`, `agents.stop`. Independent calls run in parallel with `Promise.all`. Return the value the model should see. Top-level await is allowed.",
+    minLength: 1,
+  }),
+  display: Type.Optional(
+    Type.Object({
+      name: Type.Optional(Type.String({ description: "Short run name for the activity widget header." })),
+      description: Type.Optional(Type.String({ description: "One-line description." })),
+    }),
+  ),
+  timeoutMs: Type.Optional(
+    Type.Number({ description: "Program-level deadline in milliseconds.", minimum: 1, maximum: 3_600_000 }),
+  ),
+  runId: Type.Optional(Type.String({ description: "Run id to reuse for a resumed/continued run. Generated when omitted." })),
+});
+
+export function createForgeryExecTool(
+  activity: ForgeryActivityStore,
+  runner: AgentRunner,
+): ToolDefinition<typeof PARAMS, ForgeryExecDetails> {
+  return defineTool({
+    name: "forgery_exec",
+    label: "Forgery Exec",
+    description:
+      "Run a TypeScript program that composes Pi core tools and one-shot agents in parallel. Each call is recorded in the activity store and visible in the live footer/widget/dashboard. Return the program's value to the model.",
+    promptSnippet:
+      "Compose Pi tools and one-shot agents in a single TypeScript program, with parallel calls",
+    promptGuidelines: [
+      "Use forgery_exec when you need to orchestrate multiple tools or spawn agents.",
+      "Independent host calls run in parallel: `await Promise.all([...])` for fan-out.",
+      "Each `pi.*` call is validated and recorded; `agents.run` spawns a one-shot Pi subprocess.",
+      "Return a JSON-serializable value — the model receives it verbatim.",
+    ],
+    parameters: PARAMS,
+    executionMode: "sequential",
+    async execute(
+      toolCallId,
+      params,
+      signal,
+      _onUpdate,
+      ctx,
+    ): Promise<AgentToolResult<ForgeryExecDetails>> {
+      // Bind the live context to the registry for this execution.
+      const liveCtx = ctx;
+      const registry = makeRegistry(runner, activity, liveCtx);
+
+      const runId = params.runId ?? toolCallId;
+      const hctx: HostExecCtx = { runId, activity, cwd: ctx.cwd };
+
+      // Build a merged signal that aborts on host abort OR deadline.
+      const controlled = new AbortController();
+      const hostAbort = () => controlled.abort();
+      signal?.addEventListener("abort", hostAbort, { once: true });
+      let timer: NodeJS.Timeout | undefined;
+      if (params.timeoutMs) {
+        timer = setTimeout(() => controlled.abort(), params.timeoutMs);
+      }
+      const mergedSignal = controlled.signal;
+
+      ctx.ui.setStatus("forgery", "forgery_exec: running…");
+
+      const outcome = await runForgery(params.code, registry, activity, hctx, mergedSignal);
+
+      // Cleanup.
+      signal?.removeEventListener("abort", hostAbort);
+      if (timer) clearTimeout(timer);
+
+      // Bridge into the activity store.
+      const run = activity.get(runId);
+      const calls = run ? run.calls.length : 0;
+      const ok = outcome.ok;
+      const details: ForgeryExecDetails = {
+        runId,
+        calls,
+        ok,
+        value: outcome.value,
+        error: outcome.error,
+      };
+      ctx.ui.setStatus(
+        "forgery",
+        ok ? "forgery_exec: ok" : `forgery_exec: ${outcome.error?.slice(0, 40) ?? "failed"}`,
+      );
+
+      const contentText = ok
+        ? `forgery_exec ${details.runId.slice(0, 8)} · ${details.calls} calls\n${safeToolResultText(outcome.value)}`
+        : `forgery_exec ${details.runId.slice(0, 8)} failed: ${outcome.error}`;
+
+      return {
+        content: [{ type: "text" as const, text: contentText }],
+        details,
+      };
+    },
+  });
+}
+
+// ── small helpers ────────────────────────────────────────────────────────
+
+/** Pretty-print the tool result value for the model. */
+function safeToolResultText(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}

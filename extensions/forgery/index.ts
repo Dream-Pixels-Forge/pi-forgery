@@ -1,0 +1,201 @@
+/**
+ * pi-forgery — extension factory.
+ *
+ * The default export Pi's loader invokes. Registers:
+ *   - `forgery_exec` — the programmable tool
+ *   - `/forgery` — the dashboard / status / agents / log / stop command
+ *   - two shortcuts: ctrl+alt+f (dashboard), ctrl+alt+e (focus widget)
+ *   - lifecycle hooks: session_start (bootstrap UI), session_shutdown (teardown)
+ */
+
+import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { ForgeryActivityStore } from "./src/activity/store.js";
+import { AgentRunner } from "./src/agents/runner.js";
+import { createForgeryExecTool, makeRegistry } from "./src/exec/tool.js";
+import { ForgeryUiController } from "./src/ui/controller.js";
+
+/** Module-level singletons — re-used across sessions in one process. */
+let store: ForgeryActivityStore;
+let runner: AgentRunner;
+let ui: ForgeryUiController;
+let hostCallNames: string[];
+
+function ensureSingletons() {
+  if (store) return;
+  store = new ForgeryActivityStore();
+  runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 4 });
+  // Seed the host-call registry once so the UI settings view can list them.
+  const registry = makeRegistry(runner, store, undefined as unknown as ExtensionContext);
+  hostCallNames = registry.list().sort();
+  ui = new ForgeryUiController(store, runner, hostCallNames, {
+    widget: true,
+    footer: true,
+    maxRows: 8,
+    retainMs: 30_000,
+  });
+}
+
+const FORGERY_DASHBOARD_SHORTCUT = "ctrl+alt+f";
+const FORGERY_WIDGET_SHORTCUT = "ctrl+alt+e";
+
+export default function forgery(pi: ExtensionAPI): void {
+  ensureSingletons();
+
+  // ── tool ───────────────────────────────────────────────────────────────
+  const tool = createForgeryExecTool(store, runner);
+  pi.registerTool(tool);
+
+  // ── command ────────────────────────────────────────────────────────────
+  pi.registerCommand("forgery", {
+    description: "pi-forgery: dashboard, status, agents, log, stop",
+    getArgumentCompletions: (prefix: string): { value: string; label: string; description?: string }[] | null => {
+      const subs = ["dashboard", "status", "agents", "log", "stop", "settings"];
+      const list: { value: string; label: string; description?: string }[] = subs
+        .filter((s) => s.startsWith(prefix.toLowerCase()))
+        .map((s) => ({ value: s, label: s, description: subDescriptions[s] }));
+      // Also offer running agent ids for `log` / `stop`.
+      if (prefix.length > 0 && !subs.some((s) => s.startsWith(prefix.toLowerCase()))) {
+        for (const agent of runner.listForUi()) {
+          if (agent.id.startsWith(prefix.toLowerCase())) {
+            list.push({ value: agent.id, label: agent.id, description: `agent · ${agent.name}` });
+          }
+        }
+      }
+      return list.length > 0 ? list : null;
+    },
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const [sub, ...rest] = args.trim().split(/\s+/);
+      switch (sub) {
+        case undefined:
+        case "":
+        case "dashboard":
+        case "ui":
+          ui.openDashboard(ctx);
+          break;
+        case "status":
+          await status(ctx);
+          break;
+        case "agents": {
+          const agents = runner.listForUi();
+          if (agents.length === 0) {
+            ctx.ui.notify("forgery: no agents recorded yet", "info");
+          } else {
+            ctx.ui.notify(
+              `forgery agents (${agents.length}):\n${agents
+                .map((a) => `  ${a.status} ${a.name} · ${a.task.slice(0, 40)}`)
+                .join("\n")}`,
+              "info",
+            );
+          }
+          break;
+        }
+        case "log": {
+          const agentId = rest[0];
+          if (!agentId) {
+            ctx.ui.notify("usage: /forgery log <agent-id>", "info");
+            break;
+          }
+          const agent = runner.get(agentId);
+          if (!agent) {
+            ctx.ui.notify(`forgery: agent ${agentId} not found`, "warning");
+            break;
+          }
+          const lines = [
+            `${agent.name} · ${agent.status}`,
+            agent.current ? `current: ${agent.current}` : "",
+            agent.text ? `text: ${agent.text.slice(0, 400)}` : "",
+            agent.error ? `error: ${agent.error}` : "",
+            agent.usage?.cost ? `cost: $${agent.usage.cost}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+          ctx.ui.notify(lines || "forgery: no log yet", "info");
+          break;
+        }
+        case "stop": {
+          const agentId = rest[0];
+          if (!agentId) {
+            ctx.ui.notify("usage: /forgery stop <agent-id>", "info");
+            break;
+          }
+          const res = runner.stop(agentId);
+          if (res) ctx.ui.notify(`forgery: stopped agent ${agentId}`, "info");
+          else ctx.ui.notify(`forgery: agent ${agentId} not found`, "warning");
+          break;
+        }
+        case "settings":
+          ctx.ui.notify(
+            "forgery settings (read-only)\n" +
+              `  host calls: ${hostCallNames.length}\n` +
+              `  pi binary:  ${runner.piBinary}\n` +
+              `  concurrency: ${runner.concurrency}`,
+            "info",
+          );
+          break;
+        default:
+          ctx.ui.notify(`forgery: unknown subcommand "${sub}" — try: dashboard, status, agents, log, stop`, "info");
+      }
+    },
+  });
+
+  // ── shortcuts ──────────────────────────────────────────────────────────
+  if (pi.registerShortcut) {
+    pi.registerShortcut(FORGERY_DASHBOARD_SHORTCUT, {
+      description: "Open the forgery dashboard",
+      handler: (ctx: ExtensionContext) => ui.openDashboard(ctx),
+    });
+    pi.registerShortcut(FORGERY_WIDGET_SHORTCUT, {
+      description: "Focus the forgery activity widget",
+      handler: (ctx: ExtensionContext) => ui.focusWidget(ctx),
+    });
+  }
+
+  // ── lifecycle ──────────────────────────────────────────────────────────
+  pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+    // Reset the activity store on a fresh session; reseed host-call list.
+    store.reset();
+    ui.start(ctx);
+  });
+
+  pi.on("session_shutdown", async (_event: unknown, _ctx: ExtensionContext) => {
+    ui.stop();
+    // Don't reset the store here — a follow-up session may resume.
+  });
+}
+
+// ── command sub-actions ──────────────────────────────────────────────────
+
+const subDescriptions: Record<string, string> = {
+  dashboard: "open the full-screen dashboard",
+  status: "print a compact config + activity summary",
+  agents: "list recorded one-shot agents",
+  log: "show one agent's transcript (log <agent-id>)",
+  stop: "stop one agent (stop <agent-id>)",
+  settings: "show the read-only host-call + agent runner config",
+};
+
+async function status(ctx: ExtensionContext): Promise<void> {
+  const snap = store.snapshot();
+  const active = snap.runs.find((r) => r.status === "running");
+  const lines = [
+    "forgery status",
+    `  host calls   ${hostCallNames.length}`,
+    `  pi binary    ${runner.piBinary}`,
+    `  concurrency  ${runner.concurrency}`,
+    `  runs         ${snap.runs.length} (active: ${active ? active.name : "none"})`,
+    `  agents       ${snap.agents.length}`,
+    active ? `  active       ${active.name} · ${active.calls.length} calls · ${formatDuration(snap.now - active.startedAt)}` : undefined,
+  ].filter(Boolean);
+  ctx.ui.notify(lines.join("\n"), "info");
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return "<1s";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return s % 60 > 0 ? `${m}m${s % 60}s` : `${m}m`;
+}
