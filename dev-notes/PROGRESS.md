@@ -3,8 +3,8 @@
 ## Current State
 - **Project:** pi-forgery
 - **Started:** 2026-06-15
-- **Current Phase:** 3 (Engineer) — complete, PR open for review
-- **Status:** in-progress (PR #1 awaiting review)
+- **Current Phase:** 3 (Engineer) — complete
+- **Status:** merged (PR #1 → main, squash eb56976)
 - **Repo:** https://github.com/Dream-Pixels-Forge/pi-forgery
 - **PR:** https://github.com/Dream-Pixels-Forge/pi-forgery/pull/1
 
@@ -22,10 +22,13 @@
 - None.
 
 ## Verification
-- Typecheck: `npx tsc --noEmit --skipLibCheck` → exit 0.
-- Tests: `npx tsx --test tests/*.test.ts` → 28/28 pass.
+- Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.
+- Tests: `npx tsx --test tests/*.test.ts` → 28/28 pass, 0 skipped.
 - Smoke: `pi -e ./extensions/forgery --print …` loads the extension without
   crashing (reaches the LLM stage; a 401 without an API key is expected).
+- Hygiene audit at merge: no debug leftovers, no TODO/FIXME/console.log,
+  no secrets, sane dependency tree.
+- Merged main re-verified post-merge: typecheck PASS, 28/28 tests PASS.
 
 ## Decisions Made
 - 2026-06-15: Adopt the local DPF extension layout `extensions/forgery/index.ts`
