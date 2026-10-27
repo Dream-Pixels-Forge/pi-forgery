@@ -4,9 +4,9 @@
 - **Project:** pi-forgery
 - **Started:** 2026-06-15
 - **Current Phase:** 3 (Engineer) — complete
-- **Status:** merged (PR #1 → main, squash eb56976)
+- **Status:** v0.2.0 on main (PR #1 squash-merged eb56976; PR #2 merge 5a51b86; dep-sync 9f9b2a9)
 - **Repo:** https://github.com/Dream-Pixels-Forge/pi-forgery
-- **PR:** https://github.com/Dream-Pixels-Forge/pi-forgery/pull/1
+- **PRs:** https://github.com/Dream-Pixels-Forge/pi-forgery/pull/1, https://github.com/Dream-Pixels-Forge/pi-forgery/pull/2
 
 ## Phase Completion
 - [x] Phase 0: Bootstrap (GOAL.md written)
@@ -15,7 +15,8 @@
 - [x] Phase 3: Engineer (implementation complete)
 
 ## Active Tasks
-- All implementation tasks S1–S10 done. 28 unit tests green, typecheck green,
+- All implementation tasks S1–S10 done, plus v0.2.0 (status line, footer,
+  dashboard) via PR #2. 38 unit tests green, typecheck green,
   extension loads in a real `pi` session.
 
 ## Blockers
@@ -23,12 +24,13 @@
 
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.
-- Tests: `npx tsx --test tests/*.test.ts` → 28/28 pass, 0 skipped.
+- Tests: `npx tsx --test tests/*.test.ts` → 38/38 pass, 0 skipped.
 - Smoke: `pi -e ./extensions/forgery --print …` loads the extension without
   crashing (reaches the LLM stage; a 401 without an API key is expected).
 - Hygiene audit at merge: no debug leftovers, no TODO/FIXME/console.log,
   no secrets, sane dependency tree.
-- Merged main re-verified post-merge: typecheck PASS, 28/28 tests PASS.
+- Merged main re-verified post-merge (PR #1 and PR #2, and again after the
+  9f9b2a9 dep-sync): typecheck PASS, 38/38 tests PASS, live `pi -e` smoke PASS.
 
 ## Decisions Made
 - 2026-06-15: Adopt the local DPF extension layout `extensions/forgery/index.ts`

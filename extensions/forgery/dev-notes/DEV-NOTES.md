@@ -11,9 +11,9 @@
 - [x] Guardrails (write/edit/bash policies + confirm gate)
 - [x] Wiring host pi.exec, config, capture, renderers into tool + index.ts
 - [x] Skills tree (SKILL.md + exec-patterns reference) + package.json bumps
-- [ ] README + dev-notes updates (in progress)
-- [ ] Full verify (strict tsc + all tests + pi smoke)
-- [ ] Branch, push, PR, memorius
+- [x] README + dev-notes updates (done in PR #2)
+- [x] Full verify (strict tsc + all tests + pi smoke) — 38/38 pass, re-verified on main
+- [x] Branch, push, PR, memorius — merged as PR #2 (5a51b86)
 
 ### Key Architectural Decisions
 
