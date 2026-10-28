@@ -15,7 +15,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import type { ForgerySnapshot } from "../activity/types.js";
+import type { ForgerySnapshot } from "../activity/types";
 import {
   colorStatus,
   formatCost,
@@ -26,7 +26,7 @@ import {
   statusLine,
   statusGlyph,
   truncate,
-} from "./format.js";
+} from "./format";
 
 export interface ForgeryFooterContext {
   /** Current git branch, or null if not in a repo. */

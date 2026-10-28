@@ -6,7 +6,7 @@
   "main": "extensions/forgery/index.ts",
   "scripts": {
     "typecheck": "cd extensions/forgery && npx tsc --noEmit",
-    "build": "cd extensions/forgery && npx tsc --noEmit",
+    "build": "cd extensions/forgery && npx tsc",
     "test": "cd extensions/forgery && npx tsx --test tests/*.test.ts"
   },
   "keywords": [

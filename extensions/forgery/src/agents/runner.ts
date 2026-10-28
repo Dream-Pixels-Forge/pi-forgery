@@ -11,7 +11,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { ForgeryAgentRecord } from "../activity/types.js";
+import type { ForgeryAgentRecord } from "../activity/types";
 
 export interface AgentRunRequest {
   task: string;

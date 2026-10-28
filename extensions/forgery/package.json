@@ -23,7 +23,8 @@
   "author": "Dream Pixels Forge",
   "license": "MIT",
   "dependencies": {
-    "typebox": "1.1.38"
+    "typebox": "1.1.38",
+    "@earendil-works/pi-agent-core": "^1.4.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
@@ -33,7 +34,7 @@
     "@earendil-works/pi-tui": "*",
     "@types/node": "^26.6.5",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^5.9.3"
   },
   "pi": {
     "extensions": [

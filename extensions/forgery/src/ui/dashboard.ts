@@ -12,7 +12,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, KeybindingsManager, TUI } from "@earendil-works/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ForgeryAgentRecord, ForgeryRun, ForgerySnapshot } from "../activity/types.js";
+import type { ForgeryAgentRecord, ForgeryRun, ForgerySnapshot } from "../activity/types";
 import {
   colorSafe,
   colorStatus,
@@ -23,7 +23,7 @@ import {
   safeText,
   statusGlyph,
   truncate,
-} from "./format.js";
+} from "./format";
 
 type DashboardView = "activity" | "settings";
 

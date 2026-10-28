@@ -13,8 +13,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentRunner, AgentRunResult } from "../agents/runner.js";
-import type { ForgeryActivityStore } from "../activity/store.js";
+import type { AgentRunner, AgentRunResult } from "../agents/runner";
+import type { ForgeryActivityStore } from "../activity/store";
 import type {
   Finding,
   PersonaRef,
@@ -24,7 +24,7 @@ import type {
   SynthesizedReport,
   WorkflowResult,
   WorkflowRunState,
-} from "./types.js";
+} from "./types";
 export type {
   Finding,
   PersonaRef,
@@ -34,8 +34,8 @@ export type {
   SynthesizedReport,
   WorkflowResult,
   WorkflowRunState,
-} from "./types.js";
-import { getPipeline, listPipelines } from "./pipelines.js";
+} from "./types";
+import { getPipeline, listPipelines } from "./pipelines";
 
 // ── where report artifacts and run-state files live ──────────────────────
 

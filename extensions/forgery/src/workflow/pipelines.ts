@@ -13,7 +13,7 @@
  *   5. Implementation Readiness — detailed range, readiness + codebase-details
  */
 
-import type { PersonaRef, PipelineDef } from "./types.js";
+import type { PersonaRef, PipelineDef } from "./types";
 
 const reviewer = (id: string, title: string): PersonaRef => ({
   id,
