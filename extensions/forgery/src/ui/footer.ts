@@ -91,7 +91,13 @@ export class ForgeryFooter implements Component {
   render(width: number): string[] {
     const snap = this.snapshot();
     const theme = this.theme;
-    const branch = this.footerCtx.gitBranch();
+    const branch = (() => {
+      try {
+        return this.footerCtx.gitBranch();
+      } catch {
+        return null;
+      }
+    })();
     const pct = this.footerCtx.contextPercent();
     const tokens = this.footerCtx.contextTokens();
     const model = this.footerCtx.modelId();
