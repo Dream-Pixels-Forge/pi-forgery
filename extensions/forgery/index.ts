@@ -14,6 +14,7 @@ import { ForgeryActivityStore } from "./src/activity/store.js";
 import { AgentRunner } from "./src/agents/runner.js";
 import { createForgeryExecTool, makeRegistry } from "./src/exec/tool.js";
 import { ForgeryUiController } from "./src/ui/controller.js";
+import { createEngine } from "./src/workflow/engine.js";
 
 /** Module-level singletons — re-used across sessions in one process. */
 let store: ForgeryActivityStore;
@@ -133,8 +134,114 @@ export default function forgery(pi: ExtensionAPI): void {
             "info",
           );
           break;
+        case "workflow": {
+          const [action, ...workflowArgs] = rest;
+          const engine = createEngine(store, runner, ctx.cwd);
+          switch (action) {
+            case "run": {
+              const [pipeline, target] = workflowArgs;
+              if (!pipeline || !target) {
+                ctx.ui.notify(
+                  "usage: /forgery workflow run <pipeline> <target>",
+                  "warning",
+                );
+                break;
+              }
+              const result = await engine.run(pipeline, target);
+              if ("error" in result) {
+                ctx.ui.notify(`forgery workflow failed: ${result.error}`, "error");
+              } else {
+                const total = result.phases.reduce((s, p) => s + p.findings.length, 0);
+                ctx.ui.notify(
+                  `forgery workflow ${result.status}: ${total} finding(s) across ${result.phases.length} phase(s)\n` +
+                    `  consolidated: ${result.consolidatedArtifact ?? "-"}`,
+                  "info",
+                );
+              }
+              break;
+            }
+            case "status": {
+              const [runId] = workflowArgs;
+              const state = runId ? engine.get(runId) : undefined;
+              if (!state) {
+                ctx.ui.notify(
+                  runId
+                    ? `forgery: workflow run ${runId} not found`
+                    : "usage: /forgery workflow status <run-id>",
+                  "warning",
+                );
+                break;
+              }
+              ctx.ui.notify(
+                `forgery workflow ${state.id.slice(0, 8)} · ${state.pipelineId} · ${state.status}\n` +
+                  `  target: ${state.target}\n` +
+                  `  phase: ${state.phaseIndex} / ${engine.pipeline(state.pipelineId)?.phases.length ?? "?"}\n` +
+                  `  reports: ${state.reports.length}`,
+                "info",
+              );
+              break;
+            }
+            case "list": {
+              const states = engine.states();
+              if (states.length === 0) {
+                ctx.ui.notify("forgery: no workflow runs yet", "info");
+                break;
+              }
+              ctx.ui.notify(
+                "forgery workflow runs:\n" +
+                  states
+                    .slice(0, 8)
+                    .map(
+                      (s) =>
+                        `  ${s.id.slice(0, 8)} · ${s.pipelineId} · ${s.status} · ${s.target}`,
+                    )
+                    .join("\n"),
+                "info",
+              );
+              break;
+            }
+            case "stop": {
+              const [runId] = workflowArgs;
+              if (!runId) {
+                ctx.ui.notify("usage: /forgery workflow stop <run-id>", "warning");
+                break;
+              }
+              const stopped = engine.stop(runId);
+              ctx.ui.notify(
+                stopped
+                  ? `forgery: stopped workflow ${runId.slice(0, 8)}`
+                  : `forgery: workflow ${runId.slice(0, 8)} not running`,
+                "info",
+              );
+              break;
+            }
+            case "resume": {
+              const [runId, target] = workflowArgs;
+              if (!runId) {
+                ctx.ui.notify("usage: /forgery workflow resume <run-id> [target]", "warning");
+                break;
+              }
+              const result = await engine.resume(runId, target);
+              if ("error" in result) {
+                ctx.ui.notify(`forgery: ${result.error}`, "warning");
+              } else {
+                ctx.ui.notify(
+                  `forgery: resumed workflow ${result.runId} → ${result.status}`,
+                  "info",
+                );
+              }
+              break;
+            }
+            default:
+              ctx.ui.notify(
+                `forgery: unknown workflow action "${action}" — try: run, status, list, stop, resume`,
+                "info",
+              );
+          }
+          break;
+        }
         default:
-          ctx.ui.notify(`forgery: unknown subcommand "${sub}" — try: dashboard, status, agents, log, stop`, "info");
+          ctx.ui.notify(`forgery: unknown subcommand "${sub}" — try: dashboard, status, agents, log, stop, workflow`, "info");
       }
     },
   });
@@ -173,6 +280,7 @@ const subDescriptions: Record<string, string> = {
   log: "show one agent's transcript (log <agent-id>)",
   stop: "stop one agent (stop <agent-id>)",
   settings: "show the read-only host-call + agent runner config",
+  workflow: "EGM-style Goldfish review (run|status|list|stop|resume)",
 };
 
 async function status(ctx: ExtensionContext): Promise<void> {

@@ -81,3 +81,44 @@ export const AgentsList = Type.Object({});
 export const AgentsStop = Type.Object({
   id: Type.String({ description: "Agent id returned by agents.run." }),
 });
+
+// ── Workflow (EGM-style Goldfish review) host calls ─────────────────────
+
+export const WorkflowRun = Type.Object({
+  pipeline: Type.String({
+    description:
+      "Pipeline id to run (bundled: 'review'). Use workflow.pipelines to list.",
+  }),
+  target: Type.String({
+    description:
+      "Absolute or cwd-relative path of the document to review.",
+  }),
+  context: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "GoldfishContext reading list: files the reviewers may rely on as defined knowledge.",
+    }),
+  ),
+  mode: Type.Optional(
+    Type.String({
+      description:
+        "Review mode: BRAINSTORM | REVIEW (default REVIEW).",
+    }),
+  ),
+});
+
+export const WorkflowStatus = Type.Object({
+  runId: Type.Optional(
+    Type.String({
+      description:
+        "Workflow run id. Omitted returns the active/recent workflow runs.",
+    }),
+  ),
+});
+
+export const WorkflowStop = Type.Object({
+  runId: Type.String({
+    description:
+      "Workflow run id to stop (no new agents/phases; tracked agents are killed).",
+  }),
+});
