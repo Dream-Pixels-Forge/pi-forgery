@@ -122,3 +122,27 @@ export const WorkflowStop = Type.Object({
       "Workflow run id to stop (no new agents/phases; tracked agents are killed).",
   }),
 });
+
+// ── Workflow resolve (EGM review-loop resolver) host call ─────────────────
+
+export const WorkflowResolve = Type.Object({
+  runId: Type.String({
+    description: "Workflow run id to resolve findings for (drift-report run).",
+  }),
+  findings: Type.Array(
+    Type.Object({
+      severity: Type.String({ description: "blocker | major | nit" }),
+      line: Type.Optional(
+        Type.Number({ description: "1-based line in the target document" }),
+      ),
+      issue: Type.String({ description: "Short statement of the issue" }),
+      rationale: Type.String({
+        description: "Why it matters / how to fix",
+      }),
+      decision: Type.String({
+        description: 'propose-fix | contest',
+      }),
+    }),
+    { description: "Findings with resolution decisions" },
+  ),
+});
