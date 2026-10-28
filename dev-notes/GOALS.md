@@ -5,6 +5,46 @@ so any later session can re-verify without memory. Newest first.
 
 ---
 
+## Goal: EGM Resolver Loop — PROPOSE FIX vs CONTEST triage for drift-report findings
+
+**Status:** implemented on branch `feat/forgery-resolver-loop` (commit 7d0c220), PR #9 open — audit verdict: **MET** (2026-10-28)
+**Date:** 2026-10-28
+
+### Audit Verdict (goal-met — independent subagent, 2026-10-28)
+
+```
+GOAL COMPLETION VERIFICATION
+============================
+Goal: EGM Resolver Loop — PROPOSE FIX vs CONTEST triage for drift-report findings
+Date: 2026-10-28
+
+Deliverables Check:
+[x] resolver.ts with resolveFindings
+[x] workflow.resolve host call registered
+[x] Tests + docs updated
+
+Definition of Done Check:
+[1] strict typecheck exit 0: pass — npm run --silent typecheck EXIT_CODE=0
+[2] all tests pass 0 fail: pass — tests 59, pass 59, fail 0, EXIT_CODE=0
+[3] resolver tests cover classify findings / apply fix / skip contest / re-run drift / re-audit cap: pass — 3 resolver tests in tests/workflow.test.ts
+[4] grep: workflow.resolve registered + schema-validated: pass — tool.ts ref "workflow.resolve", schema: WorkflowResolve
+[5] no new dependencies: pass — package.json dependencies: typebox 1.1.38, @earendil-works/pi-agent-core only
+[6] resolver reads-then-writes design docs only: pass — resolver.ts only touches .pi/forgery/* design docs + writes goldfish_review_report.md
+[7] one re-audit cap respected: pass — single engine.run("drift-report", target) re-audit with reAuditCapReached flag
+
+Anti-Drift Check:
+[x] Audit read-only, no files modified
+[x] All steps re-run with real exit codes, not executor claims
+[x] Blockers found: none
+
+RESULT: MET
+Remaining work: PR #9 open for review; merge is a separate human step.
+
+Scope guardrails respected: no new dependencies, no new host calls beyond workflow.resolve, read-then-write on design documents only (never source code under repair), one re-audit cap per finding.
+```
+
+---
+
 ## Goal: EGM Bootstrap Preset — recursive codebase docs + sentinel blocks (v0.3.x)
 
 **Status:** implemented on branch `feat/forgery-bootstrap-preset` (commit 73461ce), PR #8 merged — audit verdict: **MET** (2026-10-28)
