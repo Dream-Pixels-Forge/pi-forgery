@@ -5,9 +5,50 @@ so any later session can re-verify without memory. Newest first.
 
 ---
 
+## Goal: EGM Bootstrap Preset — recursive codebase docs + sentinel blocks (v0.3.x)
+
+**Status:** implemented on branch `feat/forgery-bootstrap-preset` (commit 73461ce), PR #8 merged — audit verdict: **MET** (2026-10-28)
+**Date:** 2026-10-28
+
+### Audit Verdict (goal-met — independent subagent, 2026-10-28)
+
+```
+GOAL COMPLETION VERIFICATION
+============================
+Goal: EGM Bootstrap Preset — recursive codebase docs + sentinel blocks
+Date: 2026-10-28
+
+Deliverables Check:
+[x] bootstrap pipeline + 4 personas + standard bundled
+[x] bootstrap-runner with enumerateModules/runModule/upsertSentinel
+[x] No new engine code / host calls (generic engine reused)
+[x] Tests + docs updated
+
+Definition of Done Check:
+[1] strict typecheck exit 0: pass — npm run --silent typecheck EXIT 0
+[2] all tests pass 0 fail: pass — tests 56, pass 56, fail 0
+[3] bootstrap tests cover pipeline registration / 5-phase run / sentinel upsert / module enum: pass — tests/workflow.test.ts (4 new bootstrap tests)
+[4] pipeline + personas + standard bundled and loadable: pass — BOOTSTRAP_PIPELINE registered in PIPELINES map, 4 personas + standards/bootstrap.md in diff
+[5] no new dependencies: pass — package.json dependencies unchanged (typebox 1.1.38 + @earendil-works/pi-agent-core ^1.4.0)
+[6] scope guardrails respected: pass — no resolver/dashboard/auto-fix implementations; only legitimate bootstrap references
+[7] engine.ts unchanged: pass — engine.ts absent from git diff main --stat
+
+Anti-Drift Check:
+[x] Audit read-only, no files modified
+[x] All steps re-run with real exit codes, not executor claims
+[x] Blockers found: none
+
+RESULT: MET
+Remaining work: None — PR #8 merged. Bootstrap preset complete.
+
+Scope guardrails respected: no new dependencies, no new host calls (generic engine reused), read-then-write on source files only (sentinel insertion, never rewrites logic), one pass per module.
+```
+
+---
+
 ## Goal: Gate 5 — Honesty audit of UI-rendered values
 
-**Status:** implemented on branch `feat/gate-5-honesty` (commit 0426d98), PR #7 open — audit verdict: **MET** (2026-10-28)
+**Status:** implemented on branch `feat/gate-5-honesty` (commit 0426d98), PR #7 merged as `f5435d4` — audit verdict: **MET** (2026-10-28)
 **Date:** 2026-10-28
 
 ### Audit Verdict (goal-met — independent subagent, 2026-10-28)
@@ -37,7 +78,7 @@ Anti-Drift Check:
 [x] Blockers found: none
 
 RESULT: MET
-Remaining work: PR #7 open for review; merge is a separate human step.
+Remaining work: None — PR #7 merged as `f5435d4`. Gate 5 complete.
 
 Finding: zero fabricated values. Every rendered value in widget/footer/dashboard/controller is sourced from ForgeryActivityStore.snapshot() fields or ExtensionContext fields. No source changes required — audit-only goal.
 ```
