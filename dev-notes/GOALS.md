@@ -7,8 +7,45 @@ so any later session can re-verify without memory. Newest first.
 
 ## Goal: EGM-style workflow engine inside pi-forgery (v0.3)
 
-**Status:** in progress — spec written, implementation delegated to a subagent on `feat/forgery-workflow-engine`
+**Status:** implemented on branch `feat/forgery-workflow-engine` (commit 4a54678), PR #3 open — audit verdict: **MET** (2026-10-28)
 **Date:** 2026-10-28
+
+### Audit Verdict (goal-met — independent subagent, 2026-10-28)
+
+```
+GOAL COMPLETION VERIFICATION
+============================
+Goal: EGM-style workflow engine inside pi-forgery (v0.3)
+Date: 2026-10-28
+
+Deliverables Check:
+[x] Engine + pipelines + bundled personas/standards exist
+[x] workflow.run/status/stop host calls registered
+[x] /forgery workflow command present
+[x] Tests + docs updated
+
+Definition of Done Check:
+[1] strict typecheck exit 0: pass — npm run --silent typecheck exit 0
+[2] all tests pass 0 fail: pass — tests 47, pass 47, fail 0, exit 0
+[3] engine tests cover phase sequencing/findings parse/dedupe/artifact/pause-resume/failure: pass — tests/workflow.test.ts inspected (9 new tests)
+[4] personas + standards bundled and loadable: pass — 6 persona .md + 4 standard .md in diff
+[5] registry: workflow.run/status/stop registered + schema-validated: pass — tool.ts refs; index.ts /forgery workflow run/status/stop/resume
+[6] smoke loads: pass (engine loaded by tests; typecheck passes)
+[7] no new dependencies: pass — only typebox 1.1.38
+[8] scope guardrails respected: pass — grep matches are comment-only references to deferred Non-Goals; no brainstorm/drift/resolver/dashboard implementation
+
+Anti-Drift Check:
+[x] Audit read-only, no files modified
+[x] All steps re-run with real exit codes, not executor claims
+[ ] Blockers found: none
+
+RESULT: MET
+Remaining work: PR #3 open for review; merge is a separate human step.
+```
+
+Scope guardrails respected: one preset (`review`) only; brainstorm/drift-report/bootstrap presets, resolver loop, and dedicated dashboard view are deferred Non-Goals (see goal spec).
+
+**Not merged** — PR #3 is open for human review. Merge is a separate step (the goal-writer/goal-met pipeline authorizes "done" on the spec; merge is the reviewer's call).
 
 ### Objective
 Implement a real, code-driven Goldfish review-workflow engine in pi-forgery —
