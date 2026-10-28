@@ -5,9 +5,82 @@ so any later session can re-verify without memory. Newest first.
 
 ---
 
+## Goal: Add `drift-report` workflow preset (doc-vs-code consistency scan) — v0.3.2
+
+**Status:** spec written — implementation delegated to subagent
+**Date:** 2026-10-28
+
+### Objective
+Add a `drift-report` pipeline preset to the pi-forgery workflow engine, the
+EGM drift-detection mode: each phase is a Goldfish subagent (fresh zero-context
+`pi --print` subprocess) that compares a checked-in design document against the
+live codebase and reports ONLY the divergences (missing features, incomplete
+models, logic shortcuts, architectural divergence). Output is a
+`{YYYY-MM-DD}_DRIFT_REPORT.md` per design doc, consistent with egm-drift-report.
+
+### Context
+egm-drift-report skill (from `/home/dimona/.agents/egm/skills/egm_drift_report/SKILL.md`):
+for each design document — contextualize (intent, proposed changes, filenames/
+symbols mentioned), locate corresponding source files, verify current state,
+detect drift, filter to differences only, append analysis to
+`{YYYY-MM-DD}_DRIFT_REPORT.md` using file-writing tool. pi-forgery already has
+the generic engine (commits 3985e32, 2bc6c3a) that runs pipelines as fresh
+zero-context subprocesses — the Goldfish isolation contract is satisfied.
+Adding drift-report = pipeline definition + personas (codebase auditor lead +
+zoom-out + style) + 1 standard + tests.
+
+### Deliverables
+- [ ] `src/workflow/pipelines.ts` — add `DRIFT_REPORT_PIPELINE` (phases: scan
+      design docs, locate source, verify against code, report drift;
+      targetStrategy "full") and register in PIPELINES map
+- [ ] `src/workflow/personas/*-drift.md` — drift personas adapted from EGM
+  (Apache-2.0 attribution): codebase-details-drift (lead), zoom-out-drift,
+  style-drift
+- [ ] `src/workflow/standards/drift-report.md` — drift-report standard doc
+- [ ] `src/workflow/drift-runner.ts` (or in engine) — drift-specific logic:
+      enumerate dev-notes/*.md + SPEC.md/DECISIONS.md/GOALS.md as design docs,
+      for each doc locate referenced source files via grep, produce per-doc
+      report, write consolidated `{date}_DRIFT_REPORT.md`
+- [ ] `tests/workflow.test.ts` — add drift tests (pipeline registration,
+      phase count, artifact written) via fake AgentRunner
+- [ ] README.md + SKILL.md — short "drift-report" section
+- [ ] Branch `feat/forgery-drift-report-preset`, PR opened, typecheck + all
+      tests green locally
+
+### Definition of Done
+- [ ] root `npm run --silent typecheck` → exit 0
+- [ ] `npx tsx --test tests/*.test.ts` (extensions/forgery) → all pass, 0 fail
+- [ ] `grep` confirms drift-report pipeline + personas + standard bundled
+- [ ] engine test asserts drift-report pipeline runs phases and writes report
+- [ ] no new dependencies in package.json
+
+### Verification Steps
+1. `npm run --silent typecheck` → exit 0
+2. `cd extensions/forgery && npx tsx --test tests/*.test.ts` → all pass
+3. `git diff main --stat` → changes confined to extensions/forgery/
+
+### Anti-Drift Rules
+- Drift-report uses the SAME engine as `review`/`brainstorm` — no new engine
+  code, no new host calls (`workflow.run` accepts any pipeline id).
+- Personas are adaptations, not verbatim copies; keep Apache-2.0 attribution.
+- Resolver loop and dedicated dashboard view remain deferred Non-Goals.
+- TypeScript-only kernel; TypeBox-validated args only.
+- Drift report is read-only analysis — never modifies source files.
+
+### Non-Goals (follow-up goal candidates)
+- `bootstrap` preset (per egm-bootstrap)
+- Resolver loop
+- Dedicated workflow dashboard view
+- Auto-fixing drift (report only, no remediation)
+
+### Estimated Effort
+Implementation: ~400 lines + tests. Audit: ~5 min.
+
+---
+
 ## Goal: Add `brainstorm` workflow preset (6-lens EGM concept swarm) — v0.3.1
 
-**Status:** implemented on branch `feat/forgery-brainstorm-preset` (commit 1d71c5f), PR #4 open — audit verdict: **MET** (2026-10-28)
+**Status:** implemented on branch `feat/forgery-brainstorm-preset` (commit 1d71c5f), PR #4 merged as `2bc6c3a` — audit verdict: **MET** (2026-10-28)
 **Date:** 2026-10-28
 
 ### Audit Verdict (goal-met — independent subagent, 2026-10-28)
@@ -43,7 +116,8 @@ Remaining work: PR #4 open for review; merge is a separate human step.
 
 Scope guardrails respected: no new dependencies, no new host calls (generic engine reused), resolver loop and dedicated dashboard view deferred as Non-Goals.
 
-**Not merged** — PR #4 is open for human review. Merge is a separate step.
+**Merged** — PR #4 merged as `2bc6c3a`. Merge is complete.
+
 
 ### Objective
 Add a `brainstorm` pipeline preset to the pi-forgery workflow engine, the
@@ -52,6 +126,7 @@ zoom_out, comprehension, implementation_readiness, structural) that stress-tests
 a raw concept and a synthesizer that dedupes into `concepts_brief.md`. Runs
 through the existing generic engine (`workflow.run` host call) — no new host
 calls, no new dependencies, no resolver loop, no dedicated dashboard view.
+
 
 ### Context
 EGM BRAINSTORM mode (from `/home/dimona/.agents/egm/agents/synthesizer.md` BRAINSTORM
