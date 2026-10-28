@@ -13,7 +13,7 @@ import { ForgeryActivityStore } from "../src/activity/store.js";
 import {
   parseFindings,
   synthesizeFindings,
-  createEngine,
+  WorkflowEngine,
   type Finding,
 } from "../src/workflow/engine.js";
 import type { AgentRunner, AgentRunResult } from "../src/agents/runner.js";
@@ -177,7 +177,7 @@ function reviewerScript(req: FakeRunReq): string {
 test("engine runs all phases, records agents, writes artifacts", async () => {
   const store = new ForgeryActivityStore();
   const runner = makeFakeRunner({ script: reviewerScript, delayMs: 10 });
-  const engine = createEngine(store, runner, process.cwd());
+  const engine = new WorkflowEngine(store, runner, process.cwd());
 
   const result = await engine.run("review", "docs/spec.md");
   assert.equal("error" in result, false);
@@ -214,7 +214,7 @@ test("engine runs all phases, records agents, writes artifacts", async () => {
 test("engine stop halts phases", async () => {
   const store = new ForgeryActivityStore();
   const runner = makeFakeRunner({ script: reviewerScript, delayMs: 30 });
-  const engine = createEngine(store, runner, process.cwd());
+  const engine = new WorkflowEngine(store, runner, process.cwd());
 
   const p = engine.run("review", "docs/spec.md");
   // engine.run is synchronous up to the first awaited agent; state exists now.
@@ -234,7 +234,7 @@ test("engine stop halts phases", async () => {
 test("engine.resume continues a stopped run", async () => {
   const store = new ForgeryActivityStore();
   const runner = makeFakeRunner({ script: reviewerScript, delayMs: 10 });
-  const engine = createEngine(store, runner, process.cwd());
+  const engine = new WorkflowEngine(store, runner, process.cwd());
 
   const p = engine.run("review", "docs/spec.md");
   await new Promise((res) => setTimeout(res, 0));
@@ -251,10 +251,88 @@ test("engine.resume continues a stopped run", async () => {
   assert.equal(completed.status, "completed");
 });
 
+test("engine.resume continues a stopped run", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript, delayMs: 10 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const p = engine.run("review", "docs/spec.md");
+  await new Promise((res) => setTimeout(res, 0));
+  const state = engine.states()[0];
+  engine.stop(state.id);
+  const stopped = await p;
+  assert.equal((stopped as { status: string }).status, "stopped");
+
+  const resumed = await engine.resume(state.id);
+  if ("error" in resumed) {
+    assert.fail("expected completed, got error: " + resumed.error);
+  }
+  const completed = resumed as { status: string };
+  assert.equal(completed.status, "completed");
+});
+
+test("brainstorm pipeline is registered with 6 lens phases", () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const brainstorm = engine.pipeline("brainstorm");
+  assert.ok(brainstorm);
+  assert.equal(brainstorm.phases.length, 6);
+  const lensIds = brainstorm.phases.map((p) => p.id);
+  assert.ok(lensIds.includes("design-critic"));
+  assert.ok(lensIds.includes("codebase-details"));
+  assert.ok(lensIds.includes("zoom-out"));
+  assert.ok(lensIds.includes("comprehension"));
+  assert.ok(lensIds.includes("implementation-readiness"));
+  assert.ok(lensIds.includes("style"));
+  // every phase targets full text and uses the brainstorm standard
+  for (const phase of brainstorm.phases) {
+    assert.equal(phase.targetStrategy, "full");
+    assert.equal(phase.standard, "brainstorm");
+    assert.equal(phase.reviewers.length, 1);
+  }
+});
+
+test("brainstorm run executes all 6 lens phases and writes artifacts", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript, delayMs: 5 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const result = await engine.run("brainstorm", "docs/concept.md");
+  if ("error" in result) {
+    assert.fail("brainstorm run failed: " + result.error);
+  }
+  const completed = result as { status: string; phases: unknown[] };
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.phases.length, 6);
+
+  // 6 lens agents ran
+  assert.equal(
+    (runner as unknown as { calls: FakeRunReq[] }).calls.length,
+    6,
+  );
+
+  // every phase produced a report artifact
+  const runId = (result as { runId: string }).runId;
+  const state2 = engine.get(runId);
+  assert.ok(state2);
+  assert.equal(state2.reports.length, 6);
+  for (const rep of state2.reports) {
+    assert.ok(existsSync(rep.artifactPath), `missing artifact ${rep.artifactPath}`);
+    assert.ok(readFileSync(rep.artifactPath, "utf8").includes("Findings:"));
+  }
+  const consolidated = readFileSync(
+    join(".pi/forgery/review", runId, "consolidated_review_report.md"),
+    "utf8",
+  );
+  assert.ok(consolidated.includes("Traceability Matrix"));
+});
+
 test("engine.run unknown pipeline returns error", async () => {
   const store = new ForgeryActivityStore();
   const runner = makeFakeRunner({ script: reviewerScript });
-  const engine = createEngine(store, runner, process.cwd());
+  const engine = new WorkflowEngine(store, runner, process.cwd());
   const result = await engine.run("no-such-pipeline", "docs/spec.md");
   assert.equal("error" in result, true);
   assert.equal((result as { error: string }).error, "unknown pipeline no-such-pipeline");

@@ -5,6 +5,106 @@ so any later session can re-verify without memory. Newest first.
 
 ---
 
+## Goal: Add `brainstorm` workflow preset (6-lens EGM concept swarm) — v0.3.1
+
+**Status:** implemented on branch `feat/forgery-brainstorm-preset` (commit 1d71c5f), PR #4 open — audit verdict: **MET** (2026-10-28)
+**Date:** 2026-10-28
+
+### Audit Verdict (goal-met — independent subagent, 2026-10-28)
+
+```
+GOAL COMPLETION VERIFICATION
+============================
+Goal: Add brainstorm workflow preset (6-lens EGM concept swarm) — v0.3.1
+Date: 2026-10-28
+
+Deliverables Check:
+[x] brainstorm pipeline + 6 personas + standard bundled
+[x] No new engine code / host calls (generic engine reused)
+[x] Tests + docs updated
+
+Definition of Done Check:
+[1] strict typecheck exit 0: pass — npm run --silent typecheck exit 0
+[2] all tests pass 0 fail: pass — tests 50, pass 50, fail 0, exit 0
+[3] brainstorm tests cover pipeline registration / 6-phase run / artifact: pass — tests/workflow.test.ts (3 new tests)
+[4] pipeline + personas + standard bundled and loadable: pass — pipelines.ts + 6 persona .md + standards/brainstorm.md in diff
+[5] no new dependencies: pass — only typebox 1.1.38
+[6] scope guardrails respected: pass — deferred Non-Goals are comment-only references, no implementations
+[7] engine.ts: minor deviation — 2 unused export lines removed (`export { runStates, stopSignals };`), not new engine logic
+
+Anti-Drift Check:
+[x] Audit read-only, no files modified
+[x] All steps re-run with real exit codes, not executor claims
+[ ] Blockers found: none
+
+RESULT: MET
+Remaining work: PR #4 open for review; merge is a separate human step.
+```
+
+Scope guardrails respected: no new dependencies, no new host calls (generic engine reused), resolver loop and dedicated dashboard view deferred as Non-Goals.
+
+**Not merged** — PR #4 is open for human review. Merge is a separate step.
+
+### Objective
+Add a `brainstorm` pipeline preset to the pi-forgery workflow engine, the
+EGM BRAINSTORM mode: a 6-lens Goldfish swarm (design_critic, codebase_details,
+zoom_out, comprehension, implementation_readiness, structural) that stress-tests
+a raw concept and a synthesizer that dedupes into `concepts_brief.md`. Runs
+through the existing generic engine (`workflow.run` host call) — no new host
+calls, no new dependencies, no resolver loop, no dedicated dashboard view.
+
+### Context
+EGM BRAINSTORM mode (from `/home/dimona/.agents/egm/agents/synthesizer.md` BRAINSTORM
+section): spawn the 6 Goldfish lenses in parallel, each with Mode: BRAINSTORM
+and FeatureConcept, collect findings, deduplicate, compile into
+`concepts_brief.md`. pi-forgery already has the engine (commit 3985e32, PR #3)
+that runs pipelines as fresh zero-context `pi --print` subprocesses — the
+Goldfish isolation contract is satisfied by the existing AgentRunner. Adding
+brainstorm = pipeline definition + 6 persona prompts + 1 standard + tests.
+
+### Deliverables
+- [ ] `src/workflow/pipelines.ts` — add `BRAINSTORM_PIPELINE` (6 phases, one
+      lens each, targetStrategy "full") and register in PIPELINES map
+- [ ] `src/workflow/personas/{design-critic,codebase-details,zoom-out,comprehension,implementation-readiness,structural}-brainstorm.md` — 6 persona prompts
+      adapted from EGM BRAINSTORM lenses (Apache-2.0 attribution)
+- [ ] `src/workflow/standards/brainstorm.md` — BRAINSTORM standard doc
+- [ ] `tests/workflow.test.ts` — add brainstorm tests (pipeline registration,
+      6 phases run, findings pass through, artifact written) via fake AgentRunner
+- [ ] README.md + SKILL.md — short "brainstorm" section
+- [ ] Branch `feat/forgery-brainstorm-preset`, PR opened, typecheck + all tests
+      green locally
+
+### Definition of Done
+- [ ] root `npm run --silent typecheck` → exit 0
+- [ ] `npx tsx --test tests/*.test.ts` (extensions/forgery) → all pass, 0 fail
+- [ ] `grep` confirms brainstorm pipeline + 6 personas + standard bundled
+- [ ] engine test asserts brainstorm pipeline runs 6 phases and writes artifact
+- [ ] no new dependencies in package.json
+
+### Verification Steps
+1. `npm run --silent typecheck` → exit 0
+2. `cd extensions/forgery && npx tsx --test tests/*.test.ts` → all pass
+3. `git diff main --stat` → changes confined to extensions/forgery/
+
+### Anti-Drift Rules
+- Brainstorm uses the SAME engine as `review` — no new engine code, no new host
+  calls (`workflow.run` already takes any pipeline id).
+- Personas are adaptations, not verbatim copies; keep Apache-2.0 attribution.
+- Resolver loop (PROPOSE FIX vs CONTEST) and dedicated dashboard view are
+  deferred Non-Goals — not in scope.
+- TypeScript-only kernel; TypeBox-validated args only.
+
+### Non-Goals (follow-up goal candidates)
+- `drift-report` preset (doc-vs-code scan per egm-drift-report)
+- `bootstrap` preset (per egm-bootstrap)
+- Resolver loop
+- Dedicated dashboard view for brainstorm outputs
+
+### Estimated Effort
+Implementation: ~300 lines + tests. Audit: ~5 min.
+
+---
+
 ## Goal: EGM-style workflow engine inside pi-forgery (v0.3)
 
 **Status:** implemented on branch `feat/forgery-workflow-engine` (commit 4a54678), PR #3 open — audit verdict: **MET** (2026-10-28)
