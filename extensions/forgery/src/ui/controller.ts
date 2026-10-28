@@ -15,14 +15,14 @@
 import type { ExtensionContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import type { Component, KeybindingsManager, TUI } from "@earendil-works/pi-tui";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { ForgeryActivityStore } from "../activity/store.js";
-import { AgentRunner } from "../agents/runner.js";
-import type { ForgerySnapshot } from "../activity/types.js";
-import { ForgeryDashboard } from "./dashboard.js";
-import { ForgeryFooter, type ForgeryFooterContext } from "./footer.js";
-import { ForgeryWidget, type ForgeryWidgetInteraction } from "./widget.js";
-import { formatCost, formatDuration, formatTokens, statusGlyph } from "./format.js";
-import { GitBranchReader } from "../git.js";
+import { ForgeryActivityStore } from "../activity/store";
+import { AgentRunner } from "../agents/runner";
+import type { ForgerySnapshot } from "../activity/types";
+import { ForgeryDashboard } from "./dashboard";
+import { ForgeryFooter, type ForgeryFooterContext } from "./footer";
+import { ForgeryWidget, type ForgeryWidgetInteraction } from "./widget";
+import { formatCost, formatDuration, formatTokens, statusGlyph } from "./format";
+import { GitBranchReader } from "../git";
 
 const REFRESH_MS = 100;
 const STATUS_KEY = "forgery";

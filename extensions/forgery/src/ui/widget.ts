@@ -12,7 +12,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { ForgeryAgentRecord, ForgerySnapshot } from "../activity/types.js";
+import type { ForgeryAgentRecord, ForgerySnapshot } from "../activity/types";
 import {
   colorSafe,
   colorStatus,
@@ -22,7 +22,7 @@ import {
   safeText,
   statusGlyph,
   truncate,
-} from "./format.js";
+} from "./format";
 
 export const FORGERY_WIDGET_FOCUS_HINT = "focus + expand participant";
 export const FORGERY_WIDGET_ACTIVITY_ROWS = 12;

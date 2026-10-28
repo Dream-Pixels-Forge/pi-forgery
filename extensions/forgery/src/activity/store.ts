@@ -10,7 +10,7 @@ import type {
   ForgeryRunDisplay,
   ForgerySnapshot,
   ForgeryActivityMetrics,
-} from "./types.js";
+} from "./types";
 
 /** Bounded collection sizes so a long session cannot grow the store unboundedly. */
 const MAX_RUNS = 24;

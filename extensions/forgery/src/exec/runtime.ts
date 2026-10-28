@@ -17,9 +17,9 @@
  */
 
 import type { TSchema, Static } from "typebox";
-import type { ForgeryActivityStore } from "../activity/store.js";
-import type { ForgeryActivityMetrics } from "../activity/types.js";
-import { safeJson, safeText } from "../ui/format.js";
+import type { ForgeryActivityStore } from "../activity/store";
+import type { ForgeryActivityMetrics } from "../activity/types";
+import { safeJson, safeText } from "../ui/format";
 
 /** A validated host call descriptor. */
 export interface HostCallSpec {

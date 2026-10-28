@@ -10,11 +10,11 @@
 
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { ForgeryActivityStore } from "./src/activity/store.js";
-import { AgentRunner } from "./src/agents/runner.js";
-import { createForgeryExecTool, makeRegistry } from "./src/exec/tool.js";
-import { ForgeryUiController } from "./src/ui/controller.js";
-import { createEngine } from "./src/workflow/engine.js";
+import { ForgeryActivityStore } from "./src/activity/store";
+import { AgentRunner } from "./src/agents/runner";
+import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
+import { ForgeryUiController } from "./src/ui/controller";
+import { createEngine } from "./src/workflow/engine";
 
 /** Module-level singletons — re-used across sessions in one process. */
 let store: ForgeryActivityStore;

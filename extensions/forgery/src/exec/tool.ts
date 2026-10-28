@@ -24,13 +24,13 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
-import { ForgeryActivityStore } from "../activity/store.js";
-import { AgentRunner } from "../agents/runner.js";
+import { ForgeryActivityStore } from "../activity/store";
+import { AgentRunner } from "../agents/runner";
 import {
   HostCallRegistry,
   runForgery,
   type HostExecCtx,
-} from "./runtime.js";
+} from "./runtime";
 import {
   AgentsList,
   AgentsRun,
@@ -46,9 +46,9 @@ import {
   WorkflowRun,
   WorkflowStatus,
   WorkflowStop,
-} from "./schemas.js";
-import { loadConfig, type ForgeryConfig } from "../config.js";
-import { createEngine } from "../workflow/engine.js";
+} from "./schemas";
+import { loadConfig, type ForgeryConfig } from "../config";
+import { createEngine } from "../workflow/engine";
 
 const execFileAsync = promisify(execFile);
 
