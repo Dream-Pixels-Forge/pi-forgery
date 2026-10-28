@@ -62,9 +62,7 @@ function loadWorkflowText(relPath: string): string {
 }
 
 function readTextFile(p: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const fs = require("node:fs");
-  return fs.readFileSync(p, "utf8");
+  return readFileSync(p, "utf8");
 }
 
 /** Persona prompt text for a reviewer id, bundled from personas/*.md. */
@@ -656,14 +654,11 @@ export class WorkflowEngine {
   }
 }
 
-let engineSingleton: WorkflowEngine | undefined;
-
 /** Obtain (or create) the engine bound to the current store/runner/cwd. */
 export function createEngine(
   store: ForgeryActivityStore,
   runner: AgentRunner,
   cwd: string,
 ): WorkflowEngine {
-  if (!engineSingleton) engineSingleton = new WorkflowEngine(store, runner, cwd);
-  return engineSingleton;
+  return new WorkflowEngine(store, runner, cwd);
 }

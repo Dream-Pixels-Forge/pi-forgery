@@ -535,11 +535,13 @@ test("resolver applies propose-fix and skips contested", async () => {
   assert.equal(result.applied, 1);
   assert.equal(result.contested, 1);
 
-  // Check doc was modified at line 2 only
+  // Check doc was modified at line 2 only (fix marker inserted before line 2,
+  // original line 2 preserved, contested line 3 untouched)
   const content = readFileSync(docPath, "utf8");
   const lines = content.split("\n");
   assert.ok(lines[1].includes("forgery-resolver: fixed"), "line 2 should have fix marker");
-  assert.equal(lines[2], "line 3", "line 3 should be untouched (contested)");
+  assert.equal(lines[2], "line 2", "line 2 should be preserved (not replaced)");
+  assert.equal(lines[3], "line 3", "line 3 should be untouched (contested)");
 
   // Cleanup
   try {

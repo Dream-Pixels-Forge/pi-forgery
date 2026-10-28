@@ -151,7 +151,10 @@ export class WorkflowResolver {
     };
   }
 
-  /** Apply a text repair at the specified 1-based line. */
+  /** Apply a text repair at the specified 1-based line.
+   *  Inserts a fix marker comment BEFORE the target line (never overwrites
+   *  existing content), so the original line is preserved.
+   */
   #applyFix(filePath: string, line: number, issue: string, rationale: string): void {
     if (!existsSync(filePath)) {
       throw new Error(`cannot apply fix: file not found ${filePath}`);
@@ -161,9 +164,10 @@ export class WorkflowResolver {
     if (line < 1 || line > lines.length) {
       throw new Error(`line ${line} out of range (1-${lines.length})`);
     }
-    // Replace the target line with a fix marker (idempotent: re-running
-    // replaces the same marker, never duplicates)
-    lines[line - 1] = `// forgery-resolver: fixed — ${issue} — ${rationale}`;
+    // Insert fix marker before the target line (idempotent: re-running
+    // replaces the same marker, never duplicates, never destroys content)
+    const marker = `// forgery-resolver: fixed — ${issue} — ${rationale}`;
+    lines.splice(line - 1, 0, marker);
     writeFileSync(filePath, lines.join("\n"), "utf8");
   }
 }
