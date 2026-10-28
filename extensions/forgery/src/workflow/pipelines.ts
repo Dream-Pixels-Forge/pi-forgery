@@ -248,10 +248,100 @@ export const DRIFT_REPORT_PIPELINE: PipelineDef = {
   ],
 };
 
+/**
+ * BOOTSTRAP pipeline (EGM bootstrap mode).
+ *
+ * Recursive bottom-up codebase documentation: each phase runs bootstrap
+ * personas as fresh zero-context agents against a source module, producing
+ * an Interface/Invariants/Side-Effects README contract and upserting
+ * `/// @forgery-bootstrap` sentinel blocks so future drift detection can
+ * verify docs match code. Runs are read-then-write on source files only
+ * (sentinel block insertion), never rewriting logic.
+ */
+
+export const BOOTSTRAP_PIPELINE: PipelineDef = {
+  id: "bootstrap",
+  name: "Codebase Bootstrap",
+  description:
+    "Bottom-up codebase documentation: scan modules, document interface/" +
+    "invariants/side-effects per module, and upsert @forgery-bootstrap " +
+    "sentinel blocks for future drift detection.",
+  phases: [
+    {
+      id: "scan-modules",
+      name: "Scan Modules",
+      description:
+        "Enumerate source modules and identify each module's public " +
+        "interface, dependencies, and entry points.",
+      reviewers: [
+        reviewer("interface-doc-bootstrap", "Interface Documenter"),
+      ],
+      targetStrategy: "full",
+      standard: "bootstrap",
+      reportName: "01_scan_modules_report.md",
+    },
+    {
+      id: "document-interface",
+      name: "Document Interface",
+      description:
+        "Document each module's exported API: types, functions, classes, " +
+        "and their signatures.",
+      reviewers: [
+        reviewer("interface-doc-bootstrap", "Interface Documenter"),
+      ],
+      targetStrategy: "full",
+      standard: "bootstrap",
+      reportName: "02_document_interface_report.md",
+    },
+    {
+      id: "document-invariants",
+      name: "Document Invariants",
+      description:
+        "Document per-module invariants: preconditions, postconditions, " +
+        "thread-safety, error behavior, and resource constraints.",
+      reviewers: [
+        reviewer("invariants-doc-bootstrap", "Invariants Documenter"),
+      ],
+      targetStrategy: "full",
+      standard: "bootstrap",
+      reportName: "03_document_invariants_report.md",
+    },
+    {
+      id: "document-side-effects",
+      name: "Document Side Effects",
+      description:
+        "Document per-module side effects: file I/O, network calls, " +
+        "process spawns, environment reads/writes, and mutation of shared " +
+        "state.",
+      reviewers: [
+        reviewer("side-effects-doc-bootstrap", "Side Effects Documenter"),
+      ],
+      targetStrategy: "full",
+      standard: "bootstrap",
+      reportName: "04_document_side_effects_report.md",
+    },
+    {
+      id: "upsert-sentinel",
+      name: "Upsert Sentinel Blocks",
+      description:
+        "Insert `/// @forgery-bootstrap interface=... invariants=... " +
+        "sideEffects=...` sentinel comment blocks at the top of each " +
+        "module so future drift detection can verify docs match code.",
+      reviewers: [
+        reviewer("sentinel-upsert-bootstrap", "Sentinel Upserter"),
+      ],
+      targetStrategy: "full",
+      standard: "bootstrap",
+      reportName: "05_upsert_sentinel_report.md",
+    },
+  ],
+};
+
 export const PIPELINES: Record<string, PipelineDef> = {
   review: REVIEW_PIPELINE,
   brainstorm: BRAINSTORM_PIPELINE,
   "drift-report": DRIFT_REPORT_PIPELINE,
+  bootstrap: BOOTSTRAP_PIPELINE,
 };
 export function getPipeline(id: string): PipelineDef | undefined {
   return PIPELINES[id];

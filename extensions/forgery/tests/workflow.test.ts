@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { ForgeryActivityStore } from "../src/activity/store.js";
 import {
@@ -16,6 +16,7 @@ import {
   WorkflowEngine,
   type Finding,
 } from "../src/workflow/engine.js";
+import { BootstrapRunner } from "../src/workflow/bootstrap-runner.js";
 import type { AgentRunner, AgentRunResult } from "../src/agents/runner.js";
 
 // ── fake AgentRunner (zero subprocesses) ────────────────────────────────
@@ -377,6 +378,112 @@ test("drift-report run executes all phases and writes artifacts", async () => {
     assert.ok(existsSync(rep.artifactPath), `missing artifact ${rep.artifactPath}`);
     assert.ok(readFileSync(rep.artifactPath, "utf8").includes("Findings:"));
   }
+});
+
+test("bootstrap pipeline is registered with 5 module phases", () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const bootstrap = engine.pipeline("bootstrap");
+  assert.ok(bootstrap);
+  assert.equal(bootstrap.phases.length, 5);
+  const phaseIds = bootstrap.phases.map((p) => p.id);
+  assert.ok(phaseIds.includes("scan-modules"));
+  assert.ok(phaseIds.includes("document-interface"));
+  assert.ok(phaseIds.includes("document-invariants"));
+  assert.ok(phaseIds.includes("document-side-effects"));
+  assert.ok(phaseIds.includes("upsert-sentinel"));
+  // every phase targets full text and uses the bootstrap standard
+  for (const phase of bootstrap.phases) {
+    assert.equal(phase.targetStrategy, "full");
+    assert.equal(phase.standard, "bootstrap");
+    assert.equal(phase.reviewers.length, 1);
+  }
+});
+
+test("bootstrap run executes all phases and writes artifacts", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript, delayMs: 5 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const result = await engine.run("bootstrap", "src/workflow/engine.ts");
+  if ("error" in result) {
+    assert.fail("bootstrap run failed: " + result.error);
+  }
+  const completed = result as { status: string; phases: unknown[] };
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.phases.length, 5);
+
+  // 5 phases x 1 reviewer each = 5 agent calls
+  assert.equal(
+    (runner as unknown as { calls: FakeRunReq[] }).calls.length,
+    5,
+  );
+
+  // every phase produced a report artifact
+  const runId = (result as { runId: string }).runId;
+  const state2 = engine.get(runId);
+  assert.ok(state2);
+  assert.equal(state2.reports.length, 5);
+  for (const rep of state2.reports) {
+    assert.ok(existsSync(rep.artifactPath), `missing artifact ${rep.artifactPath}`);
+    assert.ok(readFileSync(rep.artifactPath, "utf8").includes("Findings:"));
+  }
+});
+
+test("bootstrap runner upsertSentinel writes sentinel block", () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+  const runner2 = new BootstrapRunner(engine, process.cwd());
+
+  const tmpFile = join(".pi/forgery/review", "bootstrap-sentinel-test.ts");
+  writeFileSync(tmpFile, "// existing header\nconst x = 1;\n");
+
+  runner2.upsertSentinel(tmpFile, {
+    interface: "exports x: number",
+    invariants: "x is always positive",
+    sideEffects: "none",
+  });
+
+  const content = readFileSync(tmpFile, "utf8");
+  assert.ok(content.includes("/// @forgery-bootstrap"));
+  assert.ok(content.includes("interface: exports x: number"));
+  assert.ok(content.includes("invariants: x is always positive"));
+  assert.ok(content.includes("sideEffects: none"));
+  assert.ok(content.includes("/// @end"));
+  // original content preserved
+  assert.ok(content.includes("const x = 1;"));
+
+  // idempotent: running again replaces, not duplicates
+  runner2.upsertSentinel(tmpFile, {
+    interface: "exports x: number",
+    invariants: "x is always positive",
+    sideEffects: "none",
+  });
+  const content2 = readFileSync(tmpFile, "utf8");
+  const sentinelCount = (content2.match(/@forgery-bootstrap/g) || []).length;
+  assert.equal(sentinelCount, 1, "sentinel block should not be duplicated");
+
+  // cleanup
+  try {
+    writeFileSync(tmpFile, "");
+  } catch {
+    /* ignore */
+  }
+});
+
+test("bootstrap runner enumerateModules finds src files", () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+  const runner2 = new BootstrapRunner(engine, process.cwd());
+
+  const modules = runner2.enumerateModules("src/workflow");
+  assert.ok(modules.length > 0);
+  assert.ok(modules.some((m) => m.endsWith("engine.ts")));
+  assert.ok(modules.every((m) => m.endsWith(".ts")));
 });
 
 test("engine.run unknown pipeline returns error", async () => {
