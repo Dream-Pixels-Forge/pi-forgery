@@ -17,6 +17,7 @@ import {
   type Finding,
 } from "../src/workflow/engine.js";
 import { BootstrapRunner } from "../src/workflow/bootstrap-runner.js";
+import { WorkflowResolver } from "../src/workflow/resolver.js";
 import type { AgentRunner, AgentRunResult } from "../src/agents/runner.js";
 
 // ── fake AgentRunner (zero subprocesses) ────────────────────────────────
@@ -484,6 +485,144 @@ test("bootstrap runner enumerateModules finds src files", () => {
   assert.ok(modules.length > 0);
   assert.ok(modules.some((m) => m.endsWith("engine.ts")));
   assert.ok(modules.every((m) => m.endsWith(".ts")));
+});
+
+// ── resolver tests ──────────────────────────────────────────────────────
+
+function resolverScript(req: FakeRunReq): string {
+  const t = req.task;
+  // If the task contains the fix marker, drift has converged (no findings)
+  if (t.includes("forgery-resolver: fixed")) {
+    return "```json\n[]\n```";
+  }
+  // Otherwise, report 1 blocker
+  return "```json\n[{\"severity\": \"blocker\", \"line\": 1, \"issue\": \"drift found\", \"rationale\": \"doc diverges\"}]\n```";
+}
+
+function alwaysBlockerScript(req: FakeRunReq): string {
+  return "```json\n[{\"severity\": \"blocker\", \"line\": 1, \"issue\": \"drift found\", \"rationale\": \"doc diverges\"}]\n```";
+}
+
+test("resolver applies propose-fix and skips contested", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: resolverScript, delayMs: 5 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+  const resolver = new WorkflowResolver(store, runner, process.cwd(), engine);
+
+  // Create a test doc
+  const docPath = join(".pi/forgery/review", "resolver-test-doc.md");
+  writeFileSync(docPath, "line 1\nline 2\nline 3\nline 4\n");
+
+  // Run drift-report to create a run state
+  const driftResult = await engine.run("drift-report", docPath);
+  if ("error" in driftResult) {
+    assert.fail("drift run failed: " + driftResult.error);
+  }
+  const runId = (driftResult as { runId: string }).runId;
+
+  // Resolve: propose-fix line 2, contest line 3
+  const result = await resolver.resolveFindings({
+    runId,
+    findings: [
+      { severity: "major", line: 2, issue: "fix this", rationale: "it's wrong", decision: "propose-fix" },
+      { severity: "blocker", line: 3, issue: "leave this", rationale: "it's fine", decision: "contest" },
+    ],
+  });
+
+  if ("error" in result) {
+    assert.fail("resolve failed: " + result.error);
+  }
+  assert.equal(result.applied, 1);
+  assert.equal(result.contested, 1);
+
+  // Check doc was modified at line 2 only
+  const content = readFileSync(docPath, "utf8");
+  const lines = content.split("\n");
+  assert.ok(lines[1].includes("forgery-resolver: fixed"), "line 2 should have fix marker");
+  assert.equal(lines[2], "line 3", "line 3 should be untouched (contested)");
+
+  // Cleanup
+  try {
+    writeFileSync(docPath, "");
+  } catch {
+    /* ignore */
+  }
+});
+
+test("resolver re-run drift converges after fix", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: resolverScript, delayMs: 5 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+  const resolver = new WorkflowResolver(store, runner, process.cwd(), engine);
+
+  const docPath = join(".pi/forgery/review", "resolver-converge-test.md");
+  writeFileSync(docPath, "line 1\nline 2\n");
+
+  const driftResult = await engine.run("drift-report", docPath);
+  if ("error" in driftResult) {
+    assert.fail("drift run failed: " + driftResult.error);
+  }
+  const runId = (driftResult as { runId: string }).runId;
+
+  const result = await resolver.resolveFindings({
+    runId,
+    findings: [
+      { severity: "blocker", line: 1, issue: "fix line 1", rationale: "converge drift", decision: "propose-fix" },
+    ],
+  });
+
+  if ("error" in result) {
+    assert.fail("resolve failed: " + result.error);
+  }
+  assert.equal(result.applied, 1);
+  assert.equal(result.contested, 0);
+  assert.equal(result.reAudited, true, "drift should converge after fix");
+  assert.equal(result.reAuditCapReached, false, "cap should not be reached when converged");
+
+  // Cleanup
+  try {
+    writeFileSync(docPath, "");
+  } catch {
+    /* ignore */
+  }
+});
+
+test("resolver re-audit cap reached when drift still diverges", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: alwaysBlockerScript, delayMs: 5 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+  const resolver = new WorkflowResolver(store, runner, process.cwd(), engine);
+
+  const docPath = join(".pi/forgery/review", "resolver-cap-test.md");
+  writeFileSync(docPath, "line 1\nline 2\n");
+
+  const driftResult = await engine.run("drift-report", docPath);
+  if ("error" in driftResult) {
+    assert.fail("drift run failed: " + driftResult.error);
+  }
+  const runId = (driftResult as { runId: string }).runId;
+
+  const result = await resolver.resolveFindings({
+    runId,
+    findings: [
+      { severity: "blocker", line: 1, issue: "fix line 1", rationale: "try to converge", decision: "propose-fix" },
+    ],
+  });
+
+  if ("error" in result) {
+    assert.fail("resolve failed: " + result.error);
+  }
+  assert.equal(result.applied, 1);
+  assert.equal(result.contested, 0);
+  assert.equal(result.reAudited, false, "drift should NOT converge (always blocker)");
+  assert.equal(result.reAuditCapReached, true, "cap reached — one re-audit only");
+
+  // Cleanup
+  try {
+    writeFileSync(docPath, "");
+  } catch {
+    /* ignore */
+  }
 });
 
 test("engine.run unknown pipeline returns error", async () => {

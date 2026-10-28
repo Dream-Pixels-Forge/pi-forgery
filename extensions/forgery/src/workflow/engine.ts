@@ -10,7 +10,7 @@
  * dashboard surface them. Runs can be paused/resumed and stopped.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { AgentRunner, AgentRunResult } from "../agents/runner";
@@ -389,7 +389,7 @@ export class WorkflowEngine {
     let targetText = "";
     let split: { feature: string; detailed: string; boundaryLine: number | undefined } | undefined;
     try {
-      targetText = require("node:fs").readFileSync(state.target, "utf8");
+      targetText = readFileSync(state.target, "utf8");
       split = splitTarget(targetText);
     } catch {
       // missing target is a blocker for every phase; still run so reviewers can report it

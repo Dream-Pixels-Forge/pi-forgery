@@ -46,9 +46,11 @@ import {
   WorkflowRun,
   WorkflowStatus,
   WorkflowStop,
+  WorkflowResolve,
 } from "./schemas";
 import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
+import { createResolver } from "../workflow/resolver";
 
 const execFileAsync = promisify(execFile);
 
@@ -449,6 +451,32 @@ export function makeRegistry(
       if (!runId) return { error: "workflow.stop: runId is required" };
       const stopped = engine.stop(runId);
       return { value: { runId, stopped } };
+    },
+  });
+
+  registry.register({
+    ref: "workflow.resolve",
+    schema: WorkflowResolve,
+    kind: "agent",
+    execute: async (args) => {
+      const runId = String(args.runId ?? "");
+      if (!runId) return { error: "workflow.resolve: runId is required" };
+      const findings = Array.isArray(args.findings) ? (args.findings as any[]) : [];
+      const resolver = createResolver(activity, runner, liveCtx?.cwd ?? process.cwd(), engine);
+      const result = await resolver.resolveFindings({ runId, findings });
+      if (result.error) return { error: result.error };
+      return {
+        value: {
+          runId: result.runId,
+          applied: result.applied,
+          contested: result.contested,
+          reAudited: result.reAudited,
+          reAuditCapReached: result.reAuditCapReached,
+          reportPath: result.reportPath,
+        },
+        preview: `resolve ${result.applied} fix(es), ${result.contested} contest(s), re-audited: ${result.reAudited}`,
+        error: undefined,
+      };
     },
   });
 
