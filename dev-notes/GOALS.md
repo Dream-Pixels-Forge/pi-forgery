@@ -5,6 +5,45 @@ so any later session can re-verify without memory. Newest first.
 
 ---
 
+## Goal: Gate 5 — Honesty audit of UI-rendered values
+
+**Status:** implemented on branch `feat/gate-5-honesty` (commit 0426d98), PR #7 open — audit verdict: **MET** (2026-10-28)
+**Date:** 2026-10-28
+
+### Audit Verdict (goal-met — independent subagent, 2026-10-28)
+
+```
+GOAL COMPLETION VERIFICATION
+============================
+Goal: Gate 5 — Honesty audit of UI-rendered values
+Date: 2026-10-28
+
+Deliverables Check:
+[x] dev-notes/HONESTY.md exists with per-value source map
+[x] Zero fabricated values in UI layer
+[x] ForgerySnapshot ↔ rendered-text 1:1 confirmation
+
+Definition of Done Check:
+[1] dev-notes/HONESTY.md exists: pass — file present on feat/gate-5-honesty at dev-notes/HONESTY.md; contains per-value source-map tables for widget.ts, footer.ts, dashboard.ts, controller.ts mapping every rendered value to a store snapshot field or ctx field with honest/fabricated verdict
+[2] strict typecheck exit 0: pass — npm run --silent typecheck EXIT_CODE=0
+[3] all tests pass 0 fail: pass — npx tsx --test tests/*.test.ts → tests 52, pass 52, fail 0, EXIT_CODE=0
+[4] zero fabricated values: pass — grep Math.random/Date.now/hardcode in src/ui/ only hit widget.ts:83 retention-window visibility math on real store timestamps (not rendered telemetry); no hardcoded/fake numbers rendered
+[5] UI values traced to store/ctx: pass — every read via snapshot(), snap.activeTotals, snap.runs, snap.agents, snap.now, plus ctx wiring (gitBranch/contextPercent/contextTokens/modelId via ExtensionContext)
+[6] no source changes needed (audit-only): pass — git diff main feat/gate-5-honesty → dev-notes/HONESTY.md only (77 insertions, 1 file); no source changes
+
+Anti-Drift Check:
+[x] Audit read-only, no files modified (except HONESTY.md deliverable on the branch)
+[x] All steps re-run with real exit codes, not executor claims
+[x] Blockers found: none
+
+RESULT: MET
+Remaining work: PR #7 open for review; merge is a separate human step.
+
+Finding: zero fabricated values. Every rendered value in widget/footer/dashboard/controller is sourced from ForgeryActivityStore.snapshot() fields or ExtensionContext fields. No source changes required — audit-only goal.
+```
+
+---
+
 ## Goal: Gate 3 — Production build produces clean dist bundle
 
 **Status:** implemented on branch `feat/gate-3-build` (commit b6fb09f0), PR #6 merged as `0e04021` — audit verdict: **MET** (2026-10-28)
