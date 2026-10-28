@@ -5,6 +5,124 @@ so any later session can re-verify without memory. Newest first.
 
 ---
 
+## Goal: EGM-style workflow engine inside pi-forgery (v0.3)
+
+**Status:** in progress — spec written, implementation delegated to a subagent on `feat/forgery-workflow-engine`
+**Date:** 2026-10-28
+
+### Objective
+Implement a real, code-driven Goldfish review-workflow engine in pi-forgery —
+the essence of Google's EGM (`egm-review` + `egm-review-loop`) and DPF's
+`pipeline-orchestrator` — using the existing `AgentRunner` (fresh
+zero-context `pi --print` subprocesses) as the Goldfish, with phase gates,
+severity-triaged findings, artifact reports, and first-class activity-store
+entities surfaced in the widget/footer/dashboard. Not a skill — real code.
+
+### Context
+Research findings (2026-10-28, from `/home/dimona/.agents/egm/` and
+`/home/dimona/.agents/skills/pipeline-orchestrator/SKILL.md`):
+
+EGM model: an Elephant (deep-context root agent) spawns Goldfish subagents —
+stateless, read-only, fresh context, no conversation history — each with a
+persona (zoom-out YAGNI critic, hostile design critic, naive reader, tech-lead
+readiness, codebase auditor, structural, style) and a document standard.
+Findings carry severity (🔴 Blocker / 🟡 Major / 🟢 Nit) + line + rationale. A
+synthesizer persona dedupes/normalizes the swarm's raw findings and writes
+artifact-first reports (`zoom_out_report.md`, `comprehension_report.md`,
+`critic_report.md`, `intermediate_zoom_out_report.md`,
+`implementation_readiness_report.md`), ending in a
+`consolidated_review_report.md` with a traceability matrix. Stages run behind
+interactive checkpoint gates (proceed / update-doc / pause, max 1 re-audit).
+`egm-review-loop` is the dispatch engine: re-resolve line ranges before every
+iteration, spawn the swarm, aggregate, hand findings to a resolver
+(`egm-resolve`: PROPOSE FIX vs CONTEST triage).
+
+pipeline-orchestrator essence: ordered phases, each phase loads the right
+specialist, handoff gated on expected artifacts existing, progress tracked in
+a PROGRESS file, explicit error handling (phase incomplete / gate failed /
+subagent timeout → recreate). Orchestrator coordinates; it does not do the work.
+
+pi-forgery primitives that make this a workflow, not a skill:
+- `AgentRunner.run({task, systemPrompt, cwd, model, timeoutMs})` already spawns
+  a fresh zero-context `pi --print` subprocess — exactly a Goldfish.
+- `makeRegistry` + TypeBox schemas — new host calls slot in with pre-validation.
+- `ForgeryActivityStore` — runs/phases/agents/calls, already rendered by the
+  widget, footer, and `/forgery` dashboard.
+- Guardrails + budget caps already cover spawned agents.
+
+### Deliverables
+- [ ] `src/workflow/types.ts` — `WorkflowDefinition`, `WorkflowPhase`,
+      `PersonaRef`, `Finding`, `Severity`, `WorkflowRunState` types
+- [ ] `src/workflow/personas/*.md` — bundled persona prompts (adapted from EGM,
+      Apache-2.0, with attribution) + `standards/*.md` (feature-spec,
+      implementation-readiness, zoom-out, re-implementation)
+- [ ] `src/workflow/pipelines.ts` — the `review` preset: 5 EGM stages, each
+      phase = reviewers + target-range strategy + standard + report artifact
+- [ ] `src/workflow/engine.ts` — executes a phase: spawn goldfish via AgentRunner
+      (persona prompt = systemPrompt, target + range + GoldfishContext reading
+      list in task), parse each agent's fenced-JSON findings block, synthesizer
+      dedupe/triage (severity sort + line normalization), write report artifact,
+      record phase in the activity store; pause/resume state machine between
+      phases; per-phase error handling (agent failure → phase failed, workflow
+      pausable, retryable)
+- [ ] Host calls in `forgery_exec`: `workflow.run` ({pipeline, target,
+      context[], mode}), `workflow.status`, `workflow.stop` — TypeBox-validated
+- [ ] `/forgery workflow <run|status|list|stop|resume>` command + dashboard
+      listing shows workflow runs as activity entities
+- [ ] Tests (TDD): engine (fake runner: phase sequencing, findings parse,
+      dedupe/triage, artifact write, pause/resume, failure path), pipelines
+      config validation, new host-call schema validation; all existing tests
+      still pass
+- [ ] Docs: README + `SKILL.md` sections on the workflow surface
+
+### Definition of Done
+- [ ] `npm run typecheck` (root, strict) → exit 0
+- [ ] `npx tsx --test tests/*.test.ts` in `extensions/forgery` → all pass,
+      0 fail (38 existing + new)
+- [ ] New engine tests cover: phase sequencing, findings JSON parse,
+      dedupe/triage, artifact writing, pause→resume, agent-failure path
+- [ ] `grep` confirms personas + standards bundled and loadable (non-empty)
+- [ ] Registry test asserts `workflow.run` / `workflow.status` / `workflow.stop`
+      registered and schema-validated
+- [ ] Smoke: `pi -e ./extensions/forgery --print "list /forgery workflow
+      presets"` loads without crash (LLM stage may 401 — load is the gate)
+- [ ] No new dependencies in `extensions/forgery/package.json`
+- [ ] Branch `feat/forgery-workflow-engine`, PR opened, CI-style checks green
+      locally (typecheck + tests), merged after review
+
+### Verification Steps
+1. `npm run --silent typecheck` → exit 0
+2. `cd extensions/forgery && npx tsx --test tests/*.test.ts` → all pass
+3. `git diff main --stat` → changes confined to `extensions/forgery/` + docs
+4. `grep -rn "new Dependency" extensions/forgery/package.json` → none (manual)
+5. `timeout 60 pi -e ./extensions/forgery --print "hi"` → loads, no crash
+6. Audit subagent re-runs 1–5 and inspects the diff against this spec
+
+### Anti-Drift Rules
+- Goldfish agents MUST be fresh subprocesses via the existing AgentRunner —
+  never share host conversation context (that is the EGM isolation contract).
+- Engine is generic; presets are data. Ship ONE preset (`review`). Brainstorm /
+  drift-report / bootstrap presets are NEW GOALS, not scope creep here.
+- Dashboard deep-dive (new dashboard view just for workflows) is a new goal;
+  here workflows appear through the existing activity surfaces only.
+- No new npm dependencies; TypeScript-only kernel stays.
+- EGM persona/standard text is adapted, not copied verbatim wholesale; keep
+  the Apache-2.0 attribution line in each bundled file.
+- Interactive `resolve` (agent-authored fixes on the target doc) is out of
+  scope for v0.3 — engine records findings; fixing is the human's call.
+
+### Non-Goals (follow-up goal candidates)
+- `brainstorm` (6-lens concept swarm) and `drift-report` (doc-vs-code scan)
+  presets
+- Resolver loop (PROPOSE FIX vs CONTEST with agent-applied edits)
+- Dedicated dashboard view for workflow phase trees
+
+### Estimated Effort
+Implementation: 1–2 focused subagent sessions (~600–900 lines + tests).
+Audit: ~10 min.
+
+---
+
 ## Goal: Eliminate doc/version drift in pi-forgery after PR #2
 
 **Status:** executed in commits 9f9b2a9 (deps) + a1eb0df (docs) — audit verdict: **MET** (2026-10-28)
