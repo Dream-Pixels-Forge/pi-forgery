@@ -7,8 +7,43 @@ so any later session can re-verify without memory. Newest first.
 
 ## Goal: Add `brainstorm` workflow preset (6-lens EGM concept swarm) — v0.3.1
 
-**Status:** spec written — implementation delegated to subagent
+**Status:** implemented on branch `feat/forgery-brainstorm-preset` (commit 1d71c5f), PR #4 open — audit verdict: **MET** (2026-10-28)
 **Date:** 2026-10-28
+
+### Audit Verdict (goal-met — independent subagent, 2026-10-28)
+
+```
+GOAL COMPLETION VERIFICATION
+============================
+Goal: Add brainstorm workflow preset (6-lens EGM concept swarm) — v0.3.1
+Date: 2026-10-28
+
+Deliverables Check:
+[x] brainstorm pipeline + 6 personas + standard bundled
+[x] No new engine code / host calls (generic engine reused)
+[x] Tests + docs updated
+
+Definition of Done Check:
+[1] strict typecheck exit 0: pass — npm run --silent typecheck exit 0
+[2] all tests pass 0 fail: pass — tests 50, pass 50, fail 0, exit 0
+[3] brainstorm tests cover pipeline registration / 6-phase run / artifact: pass — tests/workflow.test.ts (3 new tests)
+[4] pipeline + personas + standard bundled and loadable: pass — pipelines.ts + 6 persona .md + standards/brainstorm.md in diff
+[5] no new dependencies: pass — only typebox 1.1.38
+[6] scope guardrails respected: pass — deferred Non-Goals are comment-only references, no implementations
+[7] engine.ts: minor deviation — 2 unused export lines removed (`export { runStates, stopSignals };`), not new engine logic
+
+Anti-Drift Check:
+[x] Audit read-only, no files modified
+[x] All steps re-run with real exit codes, not executor claims
+[ ] Blockers found: none
+
+RESULT: MET
+Remaining work: PR #4 open for review; merge is a separate human step.
+```
+
+Scope guardrails respected: no new dependencies, no new host calls (generic engine reused), resolver loop and dedicated dashboard view deferred as Non-Goals.
+
+**Not merged** — PR #4 is open for human review. Merge is a separate step.
 
 ### Objective
 Add a `brainstorm` pipeline preset to the pi-forgery workflow engine, the
