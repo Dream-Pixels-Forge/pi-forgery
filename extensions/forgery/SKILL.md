@@ -31,8 +31,12 @@ Improved pi-fabric reimplementation: programmable forgery_exec tool, one-shot ag
 - Goldfish-style document audit pipelines: each phase runs bundled personas
   (zoom-out, comprehension, design-critic, style, implementation-readiness,
   codebase-details) as fresh zero-context `pi --print` subprocesses
-- Bundled `review` pipeline: Zoom Out → Comprehension → Critic → Zoom Out →
-  Implementation Readiness
+- Bundled pipelines:
+  - `review` — Zoom Out → Comprehension → Critic → Zoom Out →
+    Implementation Readiness (5 phases)
+  - `brainstorm` — 6-lens concept swarm (design critic, codebase auditor,
+    zoom-out architect, naive reader, tech-lead readiness, plain-English
+    editor) that stress-tests a raw concept and dedupes into a concept brief
 - Findings returned as fenced JSON, deduped and triaged (blocker/major/nit)
 - Report artifacts written to `.pi/forgery/review/<run-id>/`
 - Host calls: `workflow.run`, `workflow.status`, `workflow.stop`

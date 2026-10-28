@@ -27,7 +27,10 @@ The `forgery_exec` tool lets you write TypeScript programs that:
   - Activity timeline and phase tracking
   - Agent monitoring and logs
   - Settings view (configuration and host calls)
-- **Workflows (EGM Goldfish review)**: Goldfish-style document audit pipelines — `workflow.run` / `workflow.status` / `workflow.stop` host calls plus `/forgery workflow run|status|list|stop|resume`. Bundled `review` pipeline: Zoom Out → Comprehension → Critic → Zoom Out → Implementation Readiness, each phase run as fresh zero-context agents, findings deduped/triaged to report artifacts under `.pi/forgery/review/`.
+- **Workflows (EGM Goldfish review)**: Goldfish-style document audit pipelines — `workflow.run` / `workflow.status` / `workflow.stop` host calls plus `/forgery workflow run|status|list|stop|resume`. Bundled pipelines:
+  - `review`: Zoom Out → Comprehension → Critic → Zoom Out → Implementation Readiness (5 phases).
+  - `brainstorm`: 6-lens concept swarm (design critic, codebase auditor, zoom-out, comprehension, tech-lead readiness, plain-English editor) that stress-tests a raw concept and dedupes into `concepts_brief.md`.
+  Each phase runs as fresh zero-context agents; findings deduped/triaged to report artifacts under `.pi/forgery/review/`.
 - **Commands**: `/forgery status`, `/forgery agents`, `/forgery log`, etc.
 
 ### Configuration
@@ -148,6 +151,7 @@ Create `.pi/forgery.json` in your project root:
 | `/forgery workflow list` | List recent workflow runs |
 | `/forgery workflow stop <run-id>` | Stop a running workflow |
 | `/forgery workflow resume <run-id>` | Resume a stopped workflow |
+| `/forgery workflow run brainstorm <target>` | 6-lens concept brainstorm against a document |
 
 ### Keyboard Shortcuts
 
