@@ -27,6 +27,7 @@ The `forgery_exec` tool lets you write TypeScript programs that:
   - Activity timeline and phase tracking
   - Agent monitoring and logs
   - Settings view (configuration and host calls)
+- **Workflows (EGM Goldfish review)**: Goldfish-style document audit pipelines — `workflow.run` / `workflow.status` / `workflow.stop` host calls plus `/forgery workflow run|status|list|stop|resume`. Bundled `review` pipeline: Zoom Out → Comprehension → Critic → Zoom Out → Implementation Readiness, each phase run as fresh zero-context agents, findings deduped/triaged to report artifacts under `.pi/forgery/review/`.
 - **Commands**: `/forgery status`, `/forgery agents`, `/forgery log`, etc.
 
 ### Configuration
@@ -142,6 +143,11 @@ Create `.pi/forgery.json` in your project root:
 | `/forgery log <agent-id>` | Show agent transcript |
 | `/forgery stop <agent-id>` | Stop a running agent |
 | `/forgery settings` | Show read-only configuration |
+| `/forgery workflow run <pipeline> <target>` | Run a Goldfish review pipeline against a document |
+| `/forgery workflow status <run-id>` | Show a workflow run's state |
+| `/forgery workflow list` | List recent workflow runs |
+| `/forgery workflow stop <run-id>` | Stop a running workflow |
+| `/forgery workflow resume <run-id>` | Resume a stopped workflow |
 
 ### Keyboard Shortcuts
 

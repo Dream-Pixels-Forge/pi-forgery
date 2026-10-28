@@ -43,8 +43,12 @@ import {
   PiLs,
   PiRead,
   PiWrite,
+  WorkflowRun,
+  WorkflowStatus,
+  WorkflowStop,
 } from "./schemas.js";
 import { loadConfig, type ForgeryConfig } from "../config.js";
+import { createEngine } from "../workflow/engine.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -70,6 +74,13 @@ export function makeRegistry(
 
   // Load config for guardrail policies
   const config = liveCtx ? loadConfig(liveCtx.cwd) : undefined;
+
+  // Workflow engine (EGM-style Goldfish review), bound to this store/runner/cwd.
+  const engine = createEngine(
+    activity,
+    runner,
+    liveCtx?.cwd ?? process.cwd(),
+  );
 
   // Shared exec helper (node:child_process — `ctx.exec` is not part of the
   // public ExtensionContext API).
@@ -373,6 +384,72 @@ export function makeRegistry(
     schema: AgentsStop,
     kind: "agent",
     execute: async (args) => ({ value: runner.stop(String(args.id ?? "")) }),
+  });
+
+  // ── Workflow (EGM Goldfish review) host calls ─────────────────────────
+
+  registry.register({
+    ref: "workflow.run",
+    schema: WorkflowRun,
+    kind: "agent",
+    execute: async (args) => {
+      const pipeline = String(args.pipeline ?? "");
+      const target = String(args.target ?? "");
+      if (!pipeline || !target) {
+        return { error: "workflow.run: pipeline and target are required" };
+      }
+      const result = await engine.run(
+        pipeline,
+        target,
+        Array.isArray(args.context) ? (args.context as string[]) : [],
+        String(args.mode ?? "REVIEW"),
+      );
+      if ("error" in result) {
+        return { error: result.error, value: result };
+      }
+      return {
+        value: {
+          runId: result.runId,
+          status: result.status,
+          phases: result.phases.map((p) => ({
+            phaseId: p.phaseId,
+            phaseName: p.phaseName,
+            findings: p.findings.length,
+            totals: p.totals,
+          })),
+          consolidatedArtifact: result.consolidatedArtifact,
+        },
+        preview: `workflow ${result.status}: ${result.phases.reduce((s, p) => s + p.findings.length, 0)} findings`,
+        error: result.status === "failed" ? result.error : undefined,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "workflow.status",
+    schema: WorkflowStatus,
+    kind: "agent",
+    execute: async (args) => {
+      const runId = args.runId ? String(args.runId) : undefined;
+      if (runId) {
+        const state = engine.get(runId);
+        if (!state) return { error: `workflow.run: unknown run ${runId}` };
+        return { value: state };
+      }
+      return { value: engine.states() };
+    },
+  });
+
+  registry.register({
+    ref: "workflow.stop",
+    schema: WorkflowStop,
+    kind: "agent",
+    execute: async (args) => {
+      const runId = String(args.runId ?? "");
+      if (!runId) return { error: "workflow.stop: runId is required" };
+      const stopped = engine.stop(runId);
+      return { value: { runId, stopped } };
+    },
   });
 
   return registry;

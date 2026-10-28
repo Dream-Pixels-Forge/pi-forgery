@@ -27,6 +27,17 @@ Improved pi-fabric reimplementation: programmable forgery_exec tool, one-shot ag
 - Monitor agent progress, tool usage, and resource consumption
 - Automatic agent lifecycle tracking in activity store
 
+### Workflows (EGM Goldfish Review)
+- Goldfish-style document audit pipelines: each phase runs bundled personas
+  (zoom-out, comprehension, design-critic, style, implementation-readiness,
+  codebase-details) as fresh zero-context `pi --print` subprocesses
+- Bundled `review` pipeline: Zoom Out → Comprehension → Critic → Zoom Out →
+  Implementation Readiness
+- Findings returned as fenced JSON, deduped and triaged (blocker/major/nit)
+- Report artifacts written to `.pi/forgery/review/<run-id>/`
+- Host calls: `workflow.run`, `workflow.status`, `workflow.stop`
+- Command: `/forgery workflow run|status|list|stop|resume`
+
 ### Safety Features
 - Static schema validation for all host calls before execution
 - Guardrail system for destructive operations (write, edit, bash)
@@ -92,6 +103,11 @@ Create `.pi/forgery.json` in your project:
 - `/forgery log <agent-id>` - Show agent transcript
 - `/forgery stop <agent-id>` - Stop a running agent
 - `/forgery settings` - Show read-only configuration
+- `/forgery workflow run <pipeline> <target>` - Run a Goldfish review pipeline
+- `/forgery workflow status <run-id>` - Show a workflow run's state
+- `/forgery workflow list` - List recent workflow runs
+- `/forgery workflow stop <run-id>` - Stop a running workflow
+- `/forgery workflow resume <run-id>` - Resume a stopped workflow
 
 ### Keyboard Shortcuts
 - `ctrl+alt+f` - Open forgery dashboard
