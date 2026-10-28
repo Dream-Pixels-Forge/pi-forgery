@@ -41,6 +41,11 @@ Improved pi-fabric reimplementation: programmable forgery_exec tool, one-shot ag
     source → verify against code → report drift). Reports only divergences
     — missing features, incomplete models, logic shortcuts, architectural
     divergence — never remediates.
+  - `bootstrap` — codebase bootstrap (scan modules → document interface →
+    document invariants → document side-effects → upsert sentinel blocks).
+    Writes `/// @forgery-bootstrap` sentinel blocks at the top of each module
+    so future drift detection can verify docs match code. Read-then-write on
+    source files only — never rewrites logic.
 - Findings returned as fenced JSON, deduped and triaged (blocker/major/nit)
 - Report artifacts written to `.pi/forgery/review/<run-id>/`
 - Host calls: `workflow.run`, `workflow.status`, `workflow.stop`

@@ -31,6 +31,7 @@ The `forgery_exec` tool lets you write TypeScript programs that:
   - `review`: Zoom Out → Comprehension → Critic → Zoom Out → Implementation Readiness (5 phases).
   - `brainstorm`: 6-lens concept swarm (design critic, codebase auditor, zoom-out, comprehension, tech-lead readiness, plain-English editor) that stress-tests a raw concept and dedupes into `concepts_brief.md`.
   - `drift-report`: doc-vs-code consistency scan (scan design docs → locate source → verify against code → report drift). Reports only divergences — missing features, incomplete models, logic shortcuts, architectural divergence — never remediates.
+  - `bootstrap`: codebase bootstrap (scan modules → document interface → document invariants → document side-effects → upsert sentinel blocks). Writes `/// @forgery-bootstrap` sentinel blocks at the top of each module so future drift detection can verify docs match code. Read-then-write on source files only — never rewrites logic.
   Each phase runs as fresh zero-context agents; findings deduped/triaged to report artifacts under `.pi/forgery/review/`.
 - **Commands**: `/forgery status`, `/forgery agents`, `/forgery log`, etc.
 
