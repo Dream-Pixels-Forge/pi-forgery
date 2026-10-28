@@ -182,9 +182,76 @@ export const BRAINSTORM_PIPELINE: PipelineDef = {
   ],
 };
 
+/**
+ * DRIFT_REPORT pipeline (EGM drift-detection mode).
+ *
+ * Each phase compares a checked-in design document against the live
+ * codebase and reports ONLY the divergences (missing features, incomplete
+ * models, logic shortcuts, architectural divergence). Runs are read-only
+ * analysis — never remediate source files.
+ */
+
+export const DRIFT_REPORT_PIPELINE: PipelineDef = {
+  id: "drift-report",
+  name: "Drift Report",
+  description:
+    "Doc-vs-code consistency scan: each phase runs drift personas as fresh " +
+    "zero-context agents against a design document and its referenced " +
+    "source files, reporting only what diverged from the design.",
+  phases: [
+    {
+      id: "scan-design-docs",
+      name: "Scan Design Docs",
+      description:
+        "Identify design documents, their intent, proposed changes, and the " +
+        "files/symbols they reference.",
+      reviewers: [reviewer("codebase-details-drift", "Codebase Auditor")],
+      targetStrategy: "full",
+      standard: "drift-report",
+      reportName: "01_scan_design_docs_report.md",
+    },
+    {
+      id: "locate-source",
+      name: "Locate Source",
+      description:
+        "Find corresponding source code files in the tree; prompt to add " +
+        "missing links to documents for cheaper future detection.",
+      reviewers: [reviewer("codebase-details-drift", "Codebase Auditor")],
+      targetStrategy: "full",
+      standard: "drift-report",
+      reportName: "02_locate_source_report.md",
+    },
+    {
+      id: "verify-against-code",
+      name: "Verify Against Code",
+      description:
+        "Read current state of located source files; compare design vs. " +
+        "reality; flag missing features, incomplete models, logic shortcuts, " +
+        "architectural divergence.",
+      reviewers: [reviewer("codebase-details-drift", "Codebase Auditor")],
+      targetStrategy: "full",
+      standard: "drift-report",
+      reportName: "03_verify_against_code_report.md",
+    },
+    {
+      id: "report-drift",
+      name: "Report Drift",
+      description:
+        "Filter to differences only; write per-doc analysis to " +
+        "{DATE}_DRIFT_REPORT.md; if code matches design perfectly, report " +
+        "“No drift detected.”",
+      reviewers: [reviewer("zoom-out-drift", "Zoom Out"), reviewer("style-drift", "Plain-English Editor")],
+      targetStrategy: "full",
+      standard: "drift-report",
+      reportName: "04_report_drift_report.md",
+    },
+  ],
+};
+
 export const PIPELINES: Record<string, PipelineDef> = {
   review: REVIEW_PIPELINE,
   brainstorm: BRAINSTORM_PIPELINE,
+  "drift-report": DRIFT_REPORT_PIPELINE,
 };
 export function getPipeline(id: string): PipelineDef | undefined {
   return PIPELINES[id];

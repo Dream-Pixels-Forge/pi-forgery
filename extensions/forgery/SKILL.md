@@ -37,6 +37,10 @@ Improved pi-fabric reimplementation: programmable forgery_exec tool, one-shot ag
   - `brainstorm` — 6-lens concept swarm (design critic, codebase auditor,
     zoom-out architect, naive reader, tech-lead readiness, plain-English
     editor) that stress-tests a raw concept and dedupes into a concept brief
+  - `drift-report` — doc-vs-code consistency scan (scan design docs → locate
+    source → verify against code → report drift). Reports only divergences
+    — missing features, incomplete models, logic shortcuts, architectural
+    divergence — never remediates.
 - Findings returned as fenced JSON, deduped and triaged (blocker/major/nit)
 - Report artifacts written to `.pi/forgery/review/<run-id>/`
 - Host calls: `workflow.run`, `workflow.status`, `workflow.stop`

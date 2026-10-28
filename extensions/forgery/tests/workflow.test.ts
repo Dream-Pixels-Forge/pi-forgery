@@ -329,6 +329,56 @@ test("brainstorm run executes all 6 lens phases and writes artifacts", async () 
   assert.ok(consolidated.includes("Traceability Matrix"));
 });
 
+test("drift-report pipeline is registered with drift phases", () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const drift = engine.pipeline("drift-report");
+  assert.ok(drift);
+  assert.equal(drift.phases.length, 4);
+  const phaseIds = drift.phases.map((p) => p.id);
+  assert.ok(phaseIds.includes("scan-design-docs"));
+  assert.ok(phaseIds.includes("locate-source"));
+  assert.ok(phaseIds.includes("verify-against-code"));
+  assert.ok(phaseIds.includes("report-drift"));
+  // every phase targets full text and uses the drift-report standard
+  for (const phase of drift.phases) {
+    assert.equal(phase.targetStrategy, "full");
+    assert.equal(phase.standard, "drift-report");
+  }
+});
+
+test("drift-report run executes all phases and writes artifacts", async () => {
+  const store = new ForgeryActivityStore();
+  const runner = makeFakeRunner({ script: reviewerScript, delayMs: 5 });
+  const engine = new WorkflowEngine(store, runner, process.cwd());
+
+  const result = await engine.run("drift-report", "dev-notes/SPEC.md");
+  if ("error" in result) {
+    assert.fail("drift-report run failed: " + result.error);
+  }
+  const completed = result as { status: string; phases: unknown[] };
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.phases.length, 4);
+
+  // 4 phases, but report-drift has 2 reviewers → 5 agent calls
+  assert.equal(
+    (runner as unknown as { calls: FakeRunReq[] }).calls.length,
+    5,
+  );
+
+  // every phase produced a report artifact
+  const runId = (result as { runId: string }).runId;
+  const state2 = engine.get(runId);
+  assert.ok(state2);
+  assert.equal(state2.reports.length, 4);
+  for (const rep of state2.reports) {
+    assert.ok(existsSync(rep.artifactPath), `missing artifact ${rep.artifactPath}`);
+    assert.ok(readFileSync(rep.artifactPath, "utf8").includes("Findings:"));
+  }
+});
+
 test("engine.run unknown pipeline returns error", async () => {
   const store = new ForgeryActivityStore();
   const runner = makeFakeRunner({ script: reviewerScript });
