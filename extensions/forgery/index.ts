@@ -181,7 +181,7 @@ export default function forgery(pi: ExtensionAPI): void {
             break;
           }
           try {
-            const result = await showImage(ctx.cwd, imagePath);
+            const result = await showImage(ctx.ui, ctx.cwd, imagePath);
             if (result.displayed) {
               ctx.ui.notify(
                 `forgery: image displayed (${result.protocol}) · ${result.path}`,
@@ -208,7 +208,7 @@ export default function forgery(pi: ExtensionAPI): void {
             break;
           }
           try {
-            const result = await showVideo(ctx.cwd, videoPath);
+            const result = await showVideo(ctx.ui, ctx.cwd, videoPath);
             if (result.displayed) {
               ctx.ui.notify(
                 `forgery: video displayed (${result.protocol}) · ${result.path} · ${result.framesShown} frames`,

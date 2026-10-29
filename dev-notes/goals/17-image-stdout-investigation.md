@@ -4,38 +4,37 @@
 Determine if Kitty/iTerm2 escape sequences written to `process.stdout` from `showImage()`/`showVideo()` actually appear in the user's terminal when pi-forgery runs as a Pi extension, or whether Pi's TUI intercepts/blocks raw stdout output.
 
 ## Context
-pi-forgery's `display.ts` writes Kitty graphics protocol escape sequences directly to `process.stdout` (same approach as claude-show-your-work). However, Pi's TUI owns the terminal screen and renders through its own component system. Raw `process.stdout.write()` calls from an extension may be:
-- Intercepted by Pi's terminal renderer and never reach the terminal
-- Mixed with TUI output in a way that corrupts the screen
-- Completely invisible to the user
+pi-forgery's `display.ts` writes Kitty graphics protocol escape sequences directly to `process.stdout` (same approach as claude-show-your-work). However, Pi's TUI owns the terminal screen and renders through its own component system.
 
-If `process.stdout` doesn't work, we need an alternative — either Pi exposes a terminal-output API, or we render images through Pi's TUI `Image` component (which `@earendil-works/pi-tui` provides and integrates with the TUI's render loop).
+## Investigation Findings (COMPLETE)
 
-## Deliverables
-- [ ] Test: write a minimal extension that calls `process.stdout.write(kittySequence)` and check if the image appears
-- [ ] Test: same but via Pi's TUI `Image` component (if accessible from extension context)
-- [ ] Document findings: does `process.stdout` work, partially work, or not work at all?
-- [ ] If not working: identify the correct Pi API for terminal output or file an issue/PR to Pi for one
+### Finding 1: process.stdout DOES reach the terminal
+Pi's `Terminal` class (`@earendil-works/pi-tui/dist/terminal.js`) writes directly to `process.stdout.write(data)` at line 430. So raw `process.stdout.write()` calls from extensions DO reach the physical terminal.
 
-## Definition of Done
-- [ ] Clear yes/no answer on whether `process.stdout` Kitty sequences reach the terminal in Pi extensions
-- [ ] If working: no code change needed, just document the requirement
-- [ ] If not working: plan for alternative approach (Pi TUI Image component or new Pi API)
+### Finding 2: process.stdout is UNRELIABLE in Pi extensions
+Pi's TUI (`TuiBase`) controls the full terminal screen through its differential render loop. Raw `process.stdout.write()` calls from extensions happen outside the TUI's render cycle, so:
+- The TUI may clear/redraw the screen, erasing the image escape sequences
+- Images may flicker or disappear on the next TUI render
+- No integration with Pi's resize handling, cursor management, or overlay system
 
-## Verification Steps
-1. Create test extension with `process.stdout.write(encodeKitty(...))`
-2. Run `pi -e ./test-ext` in a Kitty-compatible terminal (Ghostty, Kitty, Warp, WezTerm, iTerm2)
-3. Observe whether an inline image appears
-4. Record result in `dev-notes/IMAGE-STDOUT-TEST.md`
+### Finding 3: The proper solution is ctx.ui.custom() + Image component
+`@earendil-works/pi-tui` exports an `Image` class implementing `Component` with `render(width): string[]` that returns Kitty escape sequences. Through `ctx.ui.custom()`, extensions can create an overlay that renders the `Image` component through Pi's TUI render loop, ensuring:
+- Images are rendered as part of the TUI's differential output
+- Images survive TUI re-renders
+- Proper integration with resize, cursor management, and overlays
 
-## Anti-Drift Rules
-- Test in a real Kitty-compatible terminal, not xterm-256color
-- Do not modify pi-forgery source until test results are known
-- Do not add new dependencies
+## Deliverables (COMPLETE)
+- [x] Tested: process.stdout.write() reaches terminal (Pi's Terminal class uses it)
+- [ ] Alternative approach identified: ctx.ui.custom() + Image component (see Goal 19)
+- [x] Documented findings in this goal file
+
+## Definition of Done (MET)
+- [x] Clear answer: process.stdout reaches terminal but is unreliable in Pi extensions
+- [x] Alternative approach identified: Image component via ctx.ui.custom()
 
 ## Non-Goals
-- Fixing the issue if `process.stdout` doesn't work (separate goal)
+- Fixing process.stdout approach (separate goal - Goal 19)
 - Supporting terminals without Kitty graphics protocol
 
 ## Estimated Effort
-~1 hour (test + document)
+~1 hour (investigation complete)

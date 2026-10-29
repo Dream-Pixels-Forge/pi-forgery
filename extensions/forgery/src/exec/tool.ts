@@ -177,7 +177,7 @@ export function makeRegistry(
     execute: async (args, _hctx, _signal) => {
       if (!liveCtx) return { error: "no host context" };
       try {
-        const result = await showImage(liveCtx.cwd, String(args.path), {
+        const result = await showImage(liveCtx.ui, liveCtx.cwd, String(args.path), {
           maxWidthCells: args.maxWidthCells ? Number(args.maxWidthCells) : undefined,
           maxHeightCells: args.maxHeightCells ? Number(args.maxHeightCells) : undefined,
         });
@@ -201,7 +201,7 @@ export function makeRegistry(
     execute: async (args, _hctx, _signal) => {
       if (!liveCtx) return { error: "no host context" };
       const paths = Array.isArray(args.paths) ? (args.paths as string[]) : [];
-      const results = await showImages(liveCtx.cwd, paths, {
+      const results = await showImages(liveCtx.ui, liveCtx.cwd, paths, {
         maxWidthCells: args.maxWidthCells ? Number(args.maxWidthCells) : undefined,
         maxHeightCells: args.maxHeightCells ? Number(args.maxHeightCells) : undefined,
       });
@@ -226,7 +226,7 @@ export function makeRegistry(
     execute: async (args, _hctx, _signal) => {
       if (!liveCtx) return { error: "no host context" };
       try {
-        const result = await showVideo(liveCtx.cwd, String(args.path), {
+        const result = await showVideo(liveCtx.ui, liveCtx.cwd, String(args.path), {
           maxWidthCells: args.maxWidthCells ? Number(args.maxWidthCells) : undefined,
           maxHeightCells: args.maxHeightCells ? Number(args.maxHeightCells) : undefined,
         });

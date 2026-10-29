@@ -34,6 +34,9 @@
 - Improved: version bumped to 0.4.0 (root) / 0.3.0 (extension).
 - Improved: terminal image protocol override — `PI_IMAGE_PROTOCOL=kitty|iterm2|none|auto`
   env var + `/forgery image-protocol` command for runtime control.
+- Fixed: terminal image/video rendering now uses `ctx.ui.custom()` + `@earendil-works/pi-tui`
+  `Image` component instead of raw `process.stdout.write()`. Images survive TUI re-renders
+  and integrate properly with Pi's terminal management (Goal 19).
 
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.

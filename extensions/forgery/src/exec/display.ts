@@ -1,10 +1,15 @@
 /**
  * pi-forgery — terminal image display.
  *
- * Displays images directly in the terminal using the Kitty graphics protocol,
- * the same mechanism claude-show-your-work uses. Supported terminals draw the
- * image inline (Ghostty, Kitty, Warp, WezTerm, iTerm2). When the terminal
- * cannot render inline images, a text fallback is printed instead.
+ * Displays images and video directly in the terminal using Pi's TUI render
+ * loop via `ctx.ui.custom()` + `@earendil-works/pi-tui` `Image` component.
+ * This replaces the previous approach of writing raw Kitty escape sequences
+ * to `process.stdout`, which Pi's TUI render loop could overwrite between
+ * renders.
+ *
+ * Supported terminals draw the image inline (Ghostty, Kitty, Warp, WezTerm,
+ * iTerm2). When the terminal cannot render inline images, a text fallback is
+ * shown instead.
  *
  * Kitty requires PNG data (f=100), so non-PNG images are transcoded with
  * pi-coding-agent's convertToPng before encoding.
@@ -16,9 +21,13 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
 import { isAbsolute, resolve as pathResolve, extname } from "node:path";
+import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import {
-  encodeKitty,
-  encodeITerm2,
+  Image,
+  type ImageTheme,
+  type ImageOptions,
+  type Component,
+  type Focusable,
   getCapabilities,
   getImageDimensions,
   imageFallback,
@@ -60,12 +69,118 @@ function mimeForPath(path: string): string {
   }
 }
 
+/** Theme adapter: maps ImageTheme.fallbackColor to pi-coding-agent Theme. */
+function makeImageTheme(theme: ReturnType<typeof getCapabilities> extends never ? unknown : unknown): ImageTheme {
+  return {
+    fallbackColor: (text: string) => text,
+  };
+}
+
 /**
- * Read an image file and draw it inline in the terminal via the Kitty graphics
- * protocol (or iTerm2 inline images). Writes escape sequences directly to
- * process.stdout so the image appears in the terminal output.
+ * An overlay component that shows an Image and dismisses on any key press.
+ * Used for single image display via ctx.ui.custom().
+ */
+class ImageOverlay implements Component, Focusable {
+  focused = false;
+  private image: Image;
+  private done: () => void;
+
+  constructor(image: Image, done: () => void) {
+    this.image = image;
+    this.done = done;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    return this.image.render(width);
+  }
+
+  handleInput(data: string): void {
+    // Any key dismisses the overlay
+    this.done();
+  }
+}
+
+/**
+ * An overlay component that cycles through video frames and dismisses when
+ * all frames are shown or any key is pressed.
+ */
+class VideoOverlay implements Component, Focusable {
+  focused = false;
+  private frames: string[];   // base64 PNG data per frame
+  private mime: string;
+  private theme: ImageTheme;
+  private options: ImageOptions;
+  private currentIndex: number = 0;
+  private image: Image | null = null;
+  private done: () => void;
+  private interval?: NodeJS.Timeout;
+  private frameDelayMs: number;
+
+  constructor(
+    frames: string[],
+    mime: string,
+    theme: ImageTheme,
+    options: ImageOptions,
+    done: () => void,
+    frameDelayMs: number,
+  ) {
+    this.frames = frames;
+    this.mime = mime;
+    this.theme = theme;
+    this.options = options;
+    this.done = done;
+    this.frameDelayMs = frameDelayMs;
+    this.createImage(0);
+  }
+
+  private createImage(index: number): void {
+    this.image = new Image(this.frames[index], this.mime, this.theme, {
+      ...this.options,
+    });
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    return this.image ? this.image.render(width) : [];
+  }
+
+  handleInput(data: string): void {
+    // Any key dismisses early
+    this.stop();
+    this.done();
+  }
+
+  private advance(): void {
+    this.currentIndex++;
+    if (this.currentIndex >= this.frames.length) {
+      this.stop();
+      this.done();
+      return;
+    }
+    this.createImage(this.currentIndex);
+  }
+
+  start(): void {
+    this.interval = setInterval(() => this.advance(), this.frameDelayMs);
+  }
+
+  stop(): void {
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = undefined;
+    }
+  }
+}
+
+/**
+ * Show an image inline in the terminal via Pi's TUI render loop.
+ * Opens an overlay with the Image component; dismisses on any key press.
  */
 export async function showImage(
+  ui: ExtensionUIContext,
   cwd: string,
   path: string,
   options: { maxWidthCells?: number; maxHeightCells?: number } = {},
@@ -92,86 +207,92 @@ export async function showImage(
   const protocol: "kitty" | "iterm2" | null =
     caps.images === "kitty" ? "kitty" : caps.images === "iterm2" ? "iterm2" : null;
 
-  if (protocol === "kitty") {
-    // Kitty requires PNG (f=100). Transcode non-PNG images first.
-    let pngBase64 = base64;
-    if (mime !== "image/png") {
-      const converted = await convertToPng(base64, mime);
-      if (converted) {
-        pngBase64 = converted.data;
-        const pngDims = getImageDimensions(pngBase64, "image/png");
-        if (pngDims) {
-          dimensions.widthPx = pngDims.widthPx;
-          dimensions.heightPx = pngDims.heightPx;
-        }
-      } else {
-        // Transcoding unavailable: fall back to text instead of sending
-        // invalid PNG frames to the terminal.
-        const fallback = imageFallback(mime, dimensions, path);
-        process.stdout.write(fallback + "\n");
-        return {
-          path: full,
-          widthPx: dimensions.widthPx,
-          heightPx: dimensions.heightPx,
-          displayed: false,
-          protocol: null,
-          fallback,
-        };
+  if (!protocol) {
+    // Terminal cannot render inline images — text fallback only.
+    const fallback = imageFallback(mime, dimensions, path);
+    ui.notify(`forgery: inline images not supported — ${fallback}`, "info");
+    return {
+      path: full,
+      widthPx: dimensions.widthPx,
+      heightPx: dimensions.heightPx,
+      displayed: false,
+      protocol: null,
+      fallback,
+    };
+  }
+
+  // Transcode non-PNG images to PNG for Kitty protocol.
+  let pngBase64 = base64;
+  if (mime !== "image/png") {
+    const converted = await convertToPng(base64, mime);
+    if (converted) {
+      pngBase64 = converted.data;
+      const pngDims = getImageDimensions(pngBase64, "image/png");
+      if (pngDims) {
+        dimensions.widthPx = pngDims.widthPx;
+        dimensions.heightPx = pngDims.heightPx;
       }
+    } else {
+      const fallback = imageFallback(mime, dimensions, path);
+      ui.notify(`forgery: image transcoding failed — ${fallback}`, "info");
+      return {
+        path: full,
+        widthPx: dimensions.widthPx,
+        heightPx: dimensions.heightPx,
+        displayed: false,
+        protocol: null,
+        fallback,
+      };
     }
-
-    const sequence = encodeKitty(pngBase64, {
-      ...(options.maxWidthCells ? { columns: options.maxWidthCells } : {}),
-      ...(options.maxHeightCells ? { rows: options.maxHeightCells } : {}),
-      moveCursor: false,
-    });
-    process.stdout.write(sequence + "\n");
-    return {
-      path: full,
-      widthPx: dimensions.widthPx,
-      heightPx: dimensions.heightPx,
-      displayed: true,
-      protocol: "kitty",
-    };
   }
 
-  if (protocol === "iterm2") {
-    const sequence = encodeITerm2(base64, {
-      inline: true,
-      preserveAspectRatio: true,
-    });
-    process.stdout.write(sequence + "\n");
-    return {
-      path: full,
-      widthPx: dimensions.widthPx,
-      heightPx: dimensions.heightPx,
-      displayed: true,
-      protocol: "iterm2",
-    };
-  }
+  const imageTheme: ImageTheme = {
+    fallbackColor: (text: string) => text,
+  };
 
-  // No inline image support: text fallback.
-  const fallback = imageFallback(mime, dimensions, path);
-  process.stdout.write(fallback + "\n");
+  const imageOpts: ImageOptions = {
+    ...(options.maxWidthCells ? { maxWidthCells: options.maxWidthCells } : {}),
+    ...(options.maxHeightCells ? { maxHeightCells: options.maxHeightCells } : {}),
+  };
+
+  const image = new Image(pngBase64, mime, imageTheme, imageOpts, dimensions);
+
+  await new Promise<void>((resolve) => {
+    ui.custom<void>(
+      (tui, _theme, _keybindings, done) => {
+        const overlay = new ImageOverlay(image, () => {
+          done(undefined);
+          resolve();
+        });
+        tui.showOverlay(overlay, {
+          anchor: "center",
+          margin: 1,
+        });
+        return overlay;
+      },
+      { overlay: true },
+    );
+  });
+
   return {
     path: full,
     widthPx: dimensions.widthPx,
     heightPx: dimensions.heightPx,
-    displayed: false,
-    protocol: null,
-    fallback,
+    displayed: true,
+    protocol,
   };
 }
 
 /** Display several images in sequence, one after another. */
 export async function showImages(
+  ui: ExtensionUIContext,
   cwd: string,
   paths: string[],
   options: { maxWidthCells?: number; maxHeightCells?: number } = {},
 ): Promise<ShowImageResult[]> {
   const results: ShowImageResult[] = [];
   for (const path of paths) {
-    results.push(await showImage(cwd, path, options));
+    results.push(await showImage(ui, cwd, path, options));
   }
   return results;
 }
@@ -202,8 +323,12 @@ const execFileAsync = promisify(execFile);
 /** Maximum frames to extract (12 fps × 300 s cap). */
 const MAX_VIDEO_FRAMES = 3600;
 
+/** Target frame delay in ms (~12 fps). */
+const FRAME_DELAY_MS = 83;
+
 /** Extract video frames as PNG base64 via ffmpeg, then draw each inline. */
 export async function showVideo(
+  ui: ExtensionUIContext,
   cwd: string,
   path: string,
   options: { maxWidthCells?: number; maxHeightCells?: number } = {},
@@ -246,9 +371,9 @@ export async function showVideo(
   const protocol: "kitty" | "iterm2" | null =
     caps.images === "kitty" ? "kitty" : caps.images === "iterm2" ? "iterm2" : null;
 
-  if (protocol !== "kitty" && protocol !== "iterm2") {
+  if (!protocol) {
     const fallback = imageFallback("video/mp4", { widthPx, heightPx }, path);
-    process.stdout.write(fallback + "\n");
+    ui.notify(`forgery: inline video not supported — ${fallback}`, "info");
     return {
       path: full,
       widthPx,
@@ -294,35 +419,34 @@ export async function showVideo(
     );
   }
 
-  // Read frames.
+  // Read frames as base64.
   const fs = await import("node:fs");
   const entries = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".png")).sort();
   const framesShown = entries.length;
 
-  // Draw each frame inline with a small delay for animation.
+  if (framesShown === 0) {
+    try {
+      await execFileAsync("rm", ["-rf", tmpDir]);
+    } catch {
+      /* ignore */
+    }
+    return {
+      path: full,
+      widthPx,
+      heightPx,
+      duration,
+      framesShown: 0,
+      displayed: false,
+      protocol,
+      fallback: "no frames extracted",
+    };
+  }
+
+  const frameBase64s: string[] = [];
   for (const entry of entries) {
     const framePath = pathJoin(tmpDir, entry);
-    const bytes = fs.readFileSync(framePath);
-    const base64 = bytes.toString("base64");
-
-    if (protocol === "kitty") {
-      const sequence = encodeKitty(base64, {
-        ...(options.maxWidthCells ? { columns: options.maxWidthCells } : {}),
-        ...(options.maxHeightCells ? { rows: options.maxHeightCells } : {}),
-        moveCursor: false,
-      });
-      process.stdout.write(sequence + "\n");
-    } else {
-      // iTerm2
-      const sequence = encodeITerm2(base64, {
-        inline: true,
-        preserveAspectRatio: true,
-      });
-      process.stdout.write(sequence + "\n");
-    }
-
-    // Small delay between frames (~83 ms for 12 fps).
-    await new Promise((r) => setTimeout(r, 1000 / fps));
+    const frameBytes = fs.readFileSync(framePath);
+    frameBase64s.push(frameBytes.toString("base64"));
   }
 
   // Clean up temp dir.
@@ -331,6 +455,42 @@ export async function showVideo(
   } catch {
     /* ignore */
   }
+
+  const imageTheme: ImageTheme = {
+    fallbackColor: (text: string) => text,
+  };
+
+  const imageOpts: ImageOptions = {
+    ...(options.maxWidthCells ? { maxWidthCells: options.maxWidthCells } : {}),
+    ...(options.maxHeightCells ? { maxHeightCells: options.maxHeightCells } : {}),
+  };
+
+  const frameDelayMs = Math.round(1000 / fps);
+
+  await new Promise<void>((resolve) => {
+    ui.custom<void>(
+      (tui, _theme, _keybindings, done) => {
+        const overlay = new VideoOverlay(
+          frameBase64s,
+          "image/png",
+          imageTheme,
+          imageOpts,
+          () => {
+            done(undefined);
+            resolve();
+          },
+          frameDelayMs,
+        );
+        tui.showOverlay(overlay, {
+          anchor: "center",
+          margin: 1,
+        });
+        overlay.start();
+        return overlay;
+      },
+      { overlay: true },
+    );
+  });
 
   return {
     path: full,
