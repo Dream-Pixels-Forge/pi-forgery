@@ -6,8 +6,12 @@
   "main": "extensions/forgery/index.ts",
   "scripts": {
     "typecheck": "cd extensions/forgery && npx tsc --noEmit",
+    "lint": "pnpm run typecheck",
     "build": "cd extensions/forgery && npx tsc",
-    "test": "cd extensions/forgery && npx tsx --test tests/*.test.ts"
+    "test": "cd extensions/forgery && npx tsx --test tests/*.test.ts",
+    "release:patch": "npm version patch && git push origin main && git push origin --tags",
+    "release:minor": "npm version minor && git push origin main && git push origin --tags",
+    "release:major": "npm version major && git push origin main && git push origin --tags"
   },
   "keywords": [
     "pi-agent",

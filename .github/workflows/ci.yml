@@ -1,0 +1,28 @@
+# CI — quality gates on every PR and push to main
+name: CI
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+        name: TypeScript typecheck (strict)
+      - run: pnpm test
+        name: Unit test suite
+      - run: pnpm run build
+        name: Production build (dist bundle)

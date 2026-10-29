@@ -1,0 +1,33 @@
+# Release — tag-based semantic release
+name: Release
+on:
+  push:
+    tags: [ 'v*' ]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 11 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+        name: TypeScript typecheck (strict)
+      - run: pnpm test
+        name: Unit test suite
+      - run: pnpm run build
+        name: Production build (dist bundle)
+      - run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "Releasing $TAG"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+      - uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
