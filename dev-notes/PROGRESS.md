@@ -10,7 +10,7 @@
 
 ## Phase Completion
 - [x] Phase 0: Bootstrap (GOAL.md written)
-- [x] Phase 1: Brainstorm (archived from pi-fabric source study)
+- [x] Phase 1: Brainstorm (archived from source study)
 - [x] Phase 2: SPEC.md + DECISIONS.md written
 - [x] Phase 3: Engineer (implementation complete)
 
@@ -18,13 +18,18 @@
 - All implementation tasks S1–S10 done, plus v0.2.0 (status line, footer,
   dashboard) via PR #2. 38 unit tests green, typecheck green,
   extension loads in a real `pi` session.
+- New: terminal image + video display (Kitty graphics protocol) — `pi.showImage`,
+  `pi.showImages`, `pi.showVideo` host calls + `/forgery image <path>`,
+  `/forgery video <path>` commands. Video uses ffmpeg frame extraction.
+- Fixed: footer not updating — `refresh()` now re-mounts the footer factory
+  so the TUI re-renders on every activity-store/agent-revision change.
 
 ## Blockers
 - None.
 
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.
-- Tests: `npx tsx --test tests/*.test.ts` → 38/38 pass, 0 skipped.
+- Tests: `npx tsx --test tests/*.test.ts` → 59/59 pass, 0 skipped.
 - Smoke: `pi -e ./extensions/forgery --print …` loads the extension without
   crashing (reaches the LLM stage; a 401 without an API key is expected).
 - Hygiene audit at merge: no debug leftovers, no TODO/FIXME/console.log,
@@ -35,7 +40,7 @@
 ## Decisions Made
 - 2026-06-15: Adopt the local DPF extension layout `extensions/forgery/index.ts`
   + its own `package.json` (`pi.extensions` → `./index.ts`), matching
-  pi-songsy/pi-prides rather than pi-fabric's `dist/extension-bootstrap.js`
+  pi-songsy/pi-prides rather than a compiled `dist/extension-bootstrap.js`
   compiled-package layout. Rationale: matches sibling repos, no esbuild needed.
 - 2026-06-15: TypeScript-only execution kernel. Programs run as an async IIFE
   via `new Function` with a validated `pi`/`agents` host proxy. No QuickJS/Monty.
@@ -44,3 +49,8 @@
 - 2026-06-15: Host shell/file calls use `node:child_process` + `node:fs`
   (the public `ExtensionContext` has no `exec` method — confirmed against the
   pi-coding-agent .d.ts).
+- 2026-06-29: Terminal image display via Kitty graphics protocol
+  (`encodeKitty`/`encodeITerm2` from `@earendil-works/pi-tui`, PNG transcoding
+  via `convertToPng` from `@earendil-works/pi-coding-agent`). Writes escape
+  sequences to `process.stdout` like claude-show-your-work; text fallback via
+  `imageFallback` when the terminal lacks inline image support.

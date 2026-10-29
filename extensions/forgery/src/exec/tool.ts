@@ -42,6 +42,9 @@ import {
   PiGrep,
   PiLs,
   PiRead,
+  PiShowImage,
+  PiShowImages,
+  PiShowVideo,
   PiWrite,
   WorkflowRun,
   WorkflowStatus,
@@ -51,6 +54,7 @@ import {
 import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
 import { createResolver } from "../workflow/resolver";
+import { showImage, showImages, showVideo, type ShowImageResult } from "./display";
 
 const execFileAsync = promisify(execFile);
 
@@ -162,6 +166,82 @@ export function makeRegistry(
       const command = String(args.command ?? "");
       const argsArr = Array.isArray(args.args) ? (args.args as unknown[]).map(String) : [];
       return execViaHost(command, argsArr, signal, liveCtx.cwd);
+    },
+  });
+
+  registry.register({
+    ref: "pi.showImage",
+    schema: PiShowImage,
+    kind: "tool",
+    execute: async (args, _hctx, _signal) => {
+      if (!liveCtx) return { error: "no host context" };
+      try {
+        const result = await showImage(liveCtx.cwd, String(args.path), {
+          maxWidthCells: args.maxWidthCells ? Number(args.maxWidthCells) : undefined,
+          maxHeightCells: args.maxHeightCells ? Number(args.maxHeightCells) : undefined,
+        });
+        if (!result.displayed && liveCtx.ui) {
+          liveCtx.ui.notify(
+            `forgery: inline images not supported in this terminal — ${result.path}`,
+            "info",
+          );
+        }
+        return { value: result, preview: `image ${result.protocol ?? "text"} ${result.path}` };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  });
+
+  registry.register({
+    ref: "pi.showImages",
+    schema: PiShowImages,
+    kind: "tool",
+    execute: async (args, _hctx, _signal) => {
+      if (!liveCtx) return { error: "no host context" };
+      const paths = Array.isArray(args.paths) ? (args.paths as string[]) : [];
+      const results = await showImages(liveCtx.cwd, paths, {
+        maxWidthCells: args.maxWidthCells ? Number(args.maxWidthCells) : undefined,
+        maxHeightCells: args.maxHeightCells ? Number(args.maxHeightCells) : undefined,
+      });
+      const allDisplayed = results.every((r) => r.displayed);
+      if (!allDisplayed && liveCtx.ui) {
+        liveCtx.ui.notify(
+          "forgery: some images not supported in this terminal — shown as text paths",
+          "info",
+        );
+      }
+      return {
+        value: { results, count: results.length },
+        preview: `images: ${results.length} displayed`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "pi.showVideo",
+    schema: PiShowVideo,
+    kind: "tool",
+    execute: async (args, _hctx, _signal) => {
+      if (!liveCtx) return { error: "no host context" };
+      try {
+        const result = await showVideo(liveCtx.cwd, String(args.path), {
+          maxWidthCells: args.maxWidthCells ? Number(args.maxWidthCells) : undefined,
+          maxHeightCells: args.maxHeightCells ? Number(args.maxHeightCells) : undefined,
+        });
+        if (!result.displayed && liveCtx.ui) {
+          liveCtx.ui.notify(
+            `forgery: inline video not supported in this terminal — ${result.path}`,
+            "info",
+          );
+        }
+        return {
+          value: result,
+          preview: `video ${result.protocol ?? "text"} ${result.path} (${result.framesShown} frames)`,
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
     },
   });
 

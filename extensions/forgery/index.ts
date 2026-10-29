@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { ForgeryActivityStore } from "./src/activity/store";
 import { AgentRunner } from "./src/agents/runner";
 import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
+import { showImage, showVideo } from "./src/exec/display";
 import { ForgeryUiController } from "./src/ui/controller";
 import { createEngine } from "./src/workflow/engine";
 
@@ -134,6 +135,60 @@ export default function forgery(pi: ExtensionAPI): void {
             "info",
           );
           break;
+        case "image": {
+          const imagePath = rest[0];
+          if (!imagePath) {
+            ctx.ui.notify("usage: /forgery image <path>", "info");
+            break;
+          }
+          try {
+            const result = await showImage(ctx.cwd, imagePath);
+            if (result.displayed) {
+              ctx.ui.notify(
+                `forgery: image displayed (${result.protocol}) · ${result.path}`,
+                "info",
+              );
+            } else {
+              ctx.ui.notify(
+                `forgery: terminal cannot show inline images — ${result.path}`,
+                "info",
+              );
+            }
+          } catch (e) {
+            ctx.ui.notify(
+              `forgery: ${e instanceof Error ? e.message : String(e)}`,
+              "error",
+            );
+          }
+          break;
+        }
+        case "video": {
+          const videoPath = rest[0];
+          if (!videoPath) {
+            ctx.ui.notify("usage: /forgery video <path>", "info");
+            break;
+          }
+          try {
+            const result = await showVideo(ctx.cwd, videoPath);
+            if (result.displayed) {
+              ctx.ui.notify(
+                `forgery: video displayed (${result.protocol}) · ${result.path} · ${result.framesShown} frames`,
+                "info",
+              );
+            } else {
+              ctx.ui.notify(
+                `forgery: terminal cannot show inline video — ${videoPath}`,
+                "info",
+              );
+            }
+          } catch (e) {
+            ctx.ui.notify(
+              `forgery: ${e instanceof Error ? e.message : String(e)}`,
+              "error",
+            );
+          }
+          break;
+        }
         case "workflow": {
           const [action, ...workflowArgs] = rest;
           const engine = createEngine(store, runner, ctx.cwd);

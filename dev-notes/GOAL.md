@@ -3,12 +3,12 @@
 ## Project Vision
 
 pi-forgery is a focused, cleaner reimplementation of the best parts of
-[fabric-runtime/pi-fabric](https://github.com/fabric-runtime/pi-fabric), a
+a
 "programmable tool and agent runtime for Pi." It gives Pi one flat
 execution tool (`forgery_exec`) plus one-shot agent runs, a live activity
 widget above the editor, a rich footer/status-line component, and a full-screen
 `/forgery` dashboard modal — all driven by a single in-memory activity
-snapshot. It deliberately drops pi-fabric's speculative machinery (Bend proof
+snapshot. It deliberately drops speculative machinery (Bend proof
 kernels, durable-residency actor mesh, councils, Jev, speculative PTC,
 entropy certifiers, prompt-cache warming) to stay small, auditable, and cheap
 to boot.

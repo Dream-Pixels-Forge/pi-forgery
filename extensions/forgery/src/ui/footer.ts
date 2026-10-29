@@ -70,6 +70,8 @@ export class ForgeryFooter implements Component {
   private theme: Theme;
   private snapshot: () => ForgerySnapshot;
   private footerCtx: ForgeryFooterContext;
+  /** Set when the controller signals new data; render() clears it. */
+  private _dirty = false;
 
   constructor(theme: Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
     this.theme = theme;
@@ -78,7 +80,12 @@ export class ForgeryFooter implements Component {
   }
 
   invalidate(): void {
-    /* the controller re-renders on revision change */
+    this._dirty = true;
+  }
+
+  /** Whether new data is pending since last render. */
+  isDirty(): boolean {
+    return this._dirty;
   }
 
   /**
@@ -118,6 +125,7 @@ export class ForgeryFooter implements Component {
   }
 
   render(width: number): string[] {
+    this._dirty = false;
     const snap = this.snapshot();
     const theme = this.theme;
     const branch = (() => {

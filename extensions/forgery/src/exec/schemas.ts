@@ -63,6 +63,43 @@ export const PiExec = Type.Object({
   args: Type.Optional(Type.Array(Type.String())),
 });
 
+// ── Terminal image display (Kitty graphics protocol) ─────────────────────
+
+export const PiShowImage = Type.Object({
+  path: Type.String({ description: "Image file path (cwd-relative or absolute)." }),
+  maxWidthCells: Type.Optional(
+    Type.Number({ description: "Maximum width in terminal cells." }),
+  ),
+  maxHeightCells: Type.Optional(
+    Type.Number({ description: "Maximum height in terminal cells." }),
+  ),
+});
+
+export const PiShowImages = Type.Object({
+  paths: Type.Array(
+    Type.String({ description: "Image file path (cwd-relative or absolute)." }),
+    { description: "Image files to display, in order." },
+  ),
+  maxWidthCells: Type.Optional(
+    Type.Number({ description: "Maximum width in terminal cells." }),
+  ),
+  maxHeightCells: Type.Optional(
+    Type.Number({ description: "Maximum height in terminal cells." }),
+  ),
+});
+
+// ── Terminal video display (Kitty graphics protocol via ffmpeg) ─────────
+
+export const PiShowVideo = Type.Object({
+  path: Type.String({ description: "Video file path (cwd-relative or absolute)." }),
+  maxWidthCells: Type.Optional(
+    Type.Number({ description: "Maximum width in terminal cells." }),
+  ),
+  maxHeightCells: Type.Optional(
+    Type.Number({ description: "Maximum height in terminal cells." }),
+  ),
+});
+
 // ── One-shot agent run ──────────────────────────────────────────────────
 
 export const AgentsRun = Type.Object({

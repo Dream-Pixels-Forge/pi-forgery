@@ -1,6 +1,6 @@
 # DECISIONS.md — pi-forgery
 
-## 2026-06-15: Local DPF extension layout (not pi-fabric's compiled dist layout)
+## 2026-06-15: Local DPF extension layout (not a compiled dist layout)
 - **Decision:** Extend `extensions/forgery/index.ts` as the entry, with its
   own `package.json` declaring `pi.extensions: ["./index.ts"]` and the
   `@earendil-works/pi-coding-agent` + `@earendil-works/pi-tui` + `typebox`
@@ -8,7 +8,7 @@
 - **Rationale:** Matches pi-songsy, pi-prides, pi-brandly, pi-memorius in this
   workspace. No esbuild/bun build step required; Pi's loader transpiles TS
   directly (jiti). Simpler to review and cheaper to boot.
-- **Alternatives considered:** pi-fabric's `dist/extension-bootstrap.js`
+- **Alternatives considered:** a compiled `dist/extension-bootstrap.js` layout
   compiled layout (rejected: heavyweight, needs `bun run build` + proof
   artifacts, pulls in esbuild).
 - **Impact:** `package.json` at repo root + `extensions/forgery/package.json`.
@@ -17,7 +17,7 @@
 ## 2026-06-15: TypeScript-only execution kernel
 - **Decision:** `forgery_exec` runs `new Function` program bodies with a
   validated `pi` host-proxy whitelist. No QuickJS, no Monty, no CPython.
-- **Rationale:** pi-fabric's QuickJS/Monty kernels are the single largest
+- **Rationale:** QuickJS/Monty kernels are the single largest
   dependency and are not needed for the "improved version" goal. The host
   already provides `pi.read/bash/edit/...` — composing those is the actual
   value. Keeps the surface auditable.

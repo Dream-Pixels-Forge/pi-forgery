@@ -110,8 +110,23 @@ export class ForgeryUiController {
     const status = this.#statusString(snap);
     this.ui.setStatus(STATUS_KEY, status || undefined);
 
-    if (this.footer) this.footer.invalidate();
+    // Re-mount the footer so the TUI picks up invalidation (the footer's
+    // render() reads fresh data from the snapshot on every call).
+    if (this.footer) {
+      this.footer.invalidate();
+      this.#remountFooter();
+    }
     this.#syncWidget(snap);
+  }
+
+  /** Re-register the footer factory so the TUI re-renders it on next frame. */
+  #remountFooter(): void {
+    if (!this.ui || !this.footer) return;
+    const footerRef = this.footer;
+    this.ui.setFooter(
+      (_tui: TUI, _theme: Theme, _footerData: unknown): Component & { dispose?(): void } =>
+        footerRef as unknown as Component & { dispose?(): void },
+    );
   }
 
   /**
