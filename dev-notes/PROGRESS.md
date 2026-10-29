@@ -37,6 +37,9 @@
 - Fixed: terminal image/video rendering now uses `ctx.ui.custom()` + `@earendil-works/pi-tui`
   `Image` component instead of raw `process.stdout.write()`. Images survive TUI re-renders
   and integrate properly with Pi's terminal management (Goal 19).
+- Improved: terminal image protocol auto-detection — when `COLORTERM=truecolor` + TTY,
+  Kitty graphics protocol is auto-enabled without requiring `PI_IMAGE_PROTOCOL` env var
+  or `/forgery image-protocol` command (Goal 20).
 
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.

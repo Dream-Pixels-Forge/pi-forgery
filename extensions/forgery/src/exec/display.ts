@@ -29,6 +29,8 @@ import {
   type Component,
   type Focusable,
   getCapabilities,
+  resetCapabilitiesCache,
+  setCapabilityOverrides,
   getImageDimensions,
   imageFallback,
 } from "@earendil-works/pi-tui";
@@ -69,11 +71,50 @@ function mimeForPath(path: string): string {
   }
 }
 
-/** Theme adapter: maps ImageTheme.fallbackColor to pi-coding-agent Theme. */
-function makeImageTheme(theme: ReturnType<typeof getCapabilities> extends never ? unknown : unknown): ImageTheme {
-  return {
-    fallbackColor: (text: string) => text,
-  };
+/**
+ * Auto-detect the terminal image protocol when pi-tui's environment detection
+ * returns null. Uses a modern-terminal heuristic: if COLORTERM indicates
+ * truecolor support and stdout is a TTY, the terminal is likely a modern
+ * terminal emulator (Ghostty, Kitty, WezTerm, iTerm2, Warp, etc.) that
+ * supports the Kitty graphics protocol.
+ *
+ * Returns the detected protocol, or null if auto-detection should not
+ * override the user's explicit choice.
+ */
+function autoDetectImageProtocol(): "kitty" | "iterm2" | null {
+  const caps = getCapabilities();
+  if (caps.images) return caps.images; // already detected by environment
+
+  const colorTerm = process.env.COLORTERM?.toLowerCase();
+  const isModernTerminal =
+    colorTerm === "truecolor" || colorTerm === "24bit";
+  const isTTY = process.stdout.isTTY === true;
+
+  if (isModernTerminal && isTTY) {
+    return "kitty";
+  }
+
+  return null;
+}
+
+/** Ensure the image protocol is set, auto-detecting if needed. */
+function ensureImageProtocol(ui: ExtensionUIContext): "kitty" | "iterm2" | null {
+  const caps = getCapabilities();
+  if (caps.images) return caps.images;
+
+  const detected = autoDetectImageProtocol();
+  if (detected) {
+    // Temporarily override capabilities so this session uses the detected protocol.
+    setCapabilityOverrides({ images: detected });
+    resetCapabilitiesCache();
+    ui.notify(
+      `forgery: auto-detected ${detected} graphics protocol`,
+      "info",
+    );
+    return detected;
+  }
+
+  return null;
 }
 
 /**
@@ -203,9 +244,7 @@ export async function showImage(
     heightPx: 600,
   };
 
-  const caps = getCapabilities();
-  const protocol: "kitty" | "iterm2" | null =
-    caps.images === "kitty" ? "kitty" : caps.images === "iterm2" ? "iterm2" : null;
+  const protocol = ensureImageProtocol(ui);
 
   if (!protocol) {
     // Terminal cannot render inline images — text fallback only.
@@ -367,9 +406,7 @@ export async function showVideo(
     // ffprobe unavailable or failed — use defaults.
   }
 
-  const caps = getCapabilities();
-  const protocol: "kitty" | "iterm2" | null =
-    caps.images === "kitty" ? "kitty" : caps.images === "iterm2" ? "iterm2" : null;
+  const protocol = ensureImageProtocol(ui);
 
   if (!protocol) {
     const fallback = imageFallback("video/mp4", { widthPx, heightPx }, path);

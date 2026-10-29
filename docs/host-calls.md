@@ -13,7 +13,11 @@ Pi tool calls (`pi.read`, `pi.bash`, `pi.write`, etc.) and `agents.*` calls.
 
 ### Terminal protocol override
 
-The image/video protocol is auto-detected from your terminal environment (`TERM_PROGRAM`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`, `WEZTERM_PANE`, `WARP_SESSION_ID`, `ITERM_SESSION_ID`, etc.). If auto-detection fails or you want to force a protocol:
+The image/video protocol is auto-detected from your terminal environment
+(`TERM_PROGRAM`, `KITTY_WINDOW_ID`, `GHOSTTY_RESOURCES_DIR`, `WEZTERM_PANE`,
+`WARP_SESSION_ID`, `ITERM_SESSION_ID`, etc.) plus a modern-terminal heuristic:
+if `COLORTERM=truecolor|24bit` and stdout is a TTY, Kitty graphics protocol is
+assumed. If auto-detection fails or you want to force a protocol:
 
 - **`PI_IMAGE_PROTOCOL=kitty`** — force Kitty graphics protocol
 - **`PI_IMAGE_PROTOCOL=iterm2`** — force iTerm2 inline images

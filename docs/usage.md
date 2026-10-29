@@ -65,8 +65,12 @@ When the terminal cannot render inline media, a text fallback is shown instead
 
 ### Forcing the image protocol
 
-If auto-detection does not pick up your terminal's capabilities, set the
-`PI_IMAGE_PROTOCOL` environment variable before starting Pi:
+Auto-detection checks your terminal environment (TERM_PROGRAM, KITTY_WINDOW_ID,
+GHOSTTY_RESOURCES_DIR, WEZTERM_PANE, WARP_SESSION_ID, ITERM_SESSION_ID, etc.)
+plus a modern-terminal heuristic: if `COLORTERM=truecolor|24bit` and stdout is
+a TTY, Kitty graphics protocol is assumed. If auto-detection does not pick up
+your terminal's capabilities, set the `PI_IMAGE_PROTOCOL` environment variable
+before starting Pi:
 
 ```sh
 export PI_IMAGE_PROTOCOL=kitty
