@@ -62,3 +62,24 @@ on macOS, Linux and Windows:
 
 When the terminal cannot render inline media, a text fallback is shown instead
 (the file path, MIME type, and dimensions).
+
+### Forcing the image protocol
+
+If auto-detection does not pick up your terminal's capabilities, set the
+`PI_IMAGE_PROTOCOL` environment variable before starting Pi:
+
+```sh
+export PI_IMAGE_PROTOCOL=kitty
+pi
+```
+
+Valid values: `kitty`, `iterm2`, `none`, `auto`.
+
+You can also check and change the protocol from inside Pi:
+
+```sh
+/forgery image-protocol        # show current protocol
+/forgery image-protocol kitty  # force Kitty graphics
+/forgery image-protocol auto   # reset to auto-detect
+```
+

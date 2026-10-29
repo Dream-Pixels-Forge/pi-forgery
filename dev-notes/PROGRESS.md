@@ -32,6 +32,8 @@
   status, duration, per-call breakdown (ref · status · duration · tokens · cost),
   and result/error sections.
 - Improved: version bumped to 0.4.0 (root) / 0.3.0 (extension).
+- Improved: terminal image protocol override — `PI_IMAGE_PROTOCOL=kitty|iterm2|none|auto`
+  env var + `/forgery image-protocol` command for runtime control.
 
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.

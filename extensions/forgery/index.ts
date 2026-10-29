@@ -9,6 +9,15 @@
  */
 
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  detectCapabilities,
+  getCapabilities,
+  resetCapabilitiesCache,
+  setCapabilityOverrides,
+  setCapabilities,
+  type ImageProtocol,
+  type TerminalCapabilities,
+} from "@earendil-works/pi-tui";
 import { randomUUID } from "node:crypto";
 import { ForgeryActivityStore } from "./src/activity/store";
 import { AgentRunner } from "./src/agents/runner";
@@ -52,7 +61,7 @@ export default function forgery(pi: ExtensionAPI): void {
   pi.registerCommand("forgery", {
     description: "pi-forgery: dashboard, status, agents, log, stop",
     getArgumentCompletions: (prefix: string): { value: string; label: string; description?: string }[] | null => {
-      const subs = ["dashboard", "status", "agents", "log", "stop", "settings"];
+      const subs = ["dashboard", "status", "agents", "log", "stop", "settings", "image-protocol"];
       const list: { value: string; label: string; description?: string }[] = subs
         .filter((s) => s.startsWith(prefix.toLowerCase()))
         .map((s) => ({ value: s, label: s, description: subDescriptions[s] }));
@@ -135,6 +144,36 @@ export default function forgery(pi: ExtensionAPI): void {
             "info",
           );
           break;
+        case "image-protocol": {
+          const requested = rest[0]?.toLowerCase();
+          const current = getCapabilities();
+          if (!requested) {
+            const source =
+              process.env.PI_IMAGE_PROTOCOL ? "env PI_IMAGE_PROTOCOL" : "auto-detect";
+            ctx.ui.notify(
+              `forgery image protocol: ${current.images ?? "none"} (${source})`,
+              "info",
+            );
+            break;
+          }
+          if (requested === "auto" || requested === "default") {
+            // Clear any manual override and re-detect from environment.
+            setCapabilities(detectCapabilities());
+            ctx.ui.notify("forgery: image protocol reset to auto-detect", "info");
+          } else if (requested === "kitty" || requested === "iterm2" || requested === "none") {
+            setCapabilityOverrides({ images: requested === "none" ? null : requested });
+            ctx.ui.notify(`forgery: image protocol set to ${requested}`, "info");
+          } else {
+            ctx.ui.notify(
+              `forgery: unknown image protocol "${requested}" — try: kitty, iterm2, none, auto`,
+              "warning",
+            );
+            break;
+          }
+          // Reset the cache so the next showImage/showVideo call re-reads capabilities.
+          resetCapabilitiesCache();
+          break;
+        }
         case "image": {
           const imagePath = rest[0];
           if (!imagePath) {
