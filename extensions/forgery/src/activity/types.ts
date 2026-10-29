@@ -136,6 +136,8 @@ export interface ForgeryRun {
   error?: string;
   /** Working directory of the run. */
   cwd: string;
+  /** Compacts (context resets) used so far in this run. */
+  compacts: number;
   /** Accumulated metrics for this run. */
   metrics?: ForgeryActivityMetrics;
 }
@@ -166,7 +168,7 @@ export interface ForgeryAgentRecord {
   finishedAt?: number;
 }
 
-/** Frozen, read-only view of the whole activity surface. */
+/** Read-only view of the whole activity surface. `now` is the live clock. */
 export interface ForgerySnapshot {
   now: number;
   /** Most-recent run first. */

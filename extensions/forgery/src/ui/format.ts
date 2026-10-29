@@ -6,13 +6,23 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-/** 1234 → "1.2k", 123000 → "123k", <1000 → raw digits. */
+/** 1234 → "1.2k", 123000 → "123k", 1000000 → "1M", <1000 → raw digits. */
 export function formatTokens(count: number | null | undefined): string {
   if (count === null || count === undefined) return "—";
   if (count < 1000) return String(count);
   const k = count / 1000;
-  if (k < 100) return `${k.toFixed(1).replace(/\.0$/, "")}k`;
-  return `${Math.round(k)}k`;
+  if (k < 1000) return `${k.toFixed(1).replace(/\.0$/, "")}k`;
+  const m = count / 1_000_000;
+  return `${m.toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+/** Braille spinner frames cycled to animate a "working" run/agent. */
+export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Animated status glyph: running → next spinner frame, else the static glyph. */
+export function animatedStatusGlyph(status: string, frameIndex: number): string {
+  if (status === "running") return SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
+  return statusGlyph(status);
 }
 
 /** Format a dollar amount. Undefined/0 → "—". */
@@ -119,4 +129,58 @@ export function colorStatus(theme: Theme, status: string): string {
 /** Colored, truncated, single-line label. */
 export function colorSafe(theme: Theme, text: string): string {
   return theme.fg("text", safeText(text));
+}
+
+// ── box drawing (for beautiful terminal output) ──────────────────────────
+
+const BOX = {
+  tl: "┌",
+  tr: "┐",
+  bl: "└",
+  br: "┘",
+  h: "─",
+  v: "│",
+};
+
+/** Wrap lines in a box-drawing border. Returns the boxed lines. */
+export function box(lines: string[], title?: string): string[] {
+  if (lines.length === 0) return [];
+  const pad = title ? 2 : 0;
+  const contentWidth = Math.max(...lines.map((l) => visibleLength(l)));
+  const width = contentWidth + pad + 4; // 2 for borders + 2 for inner padding
+
+  let top: string;
+  if (title) {
+    const titleLen = visibleLength(title);
+    const innerWidth = width - 4; // space between borders
+    const available = innerWidth - titleLen - 2; // 2 for spaces around title
+    const left = Math.max(0, Math.floor(available / 2));
+    const right = Math.max(0, available - left);
+    top = `${BOX.tl}${BOX.h.repeat(left)} ${title} ${BOX.h.repeat(right)}${BOX.tr}`;
+  } else {
+    top = BOX.tl + BOX.h.repeat(width - 2) + BOX.tr;
+  }
+  const body = lines.map((l) => BOX.v + " " + padRight(l, width - 4) + " " + BOX.v);
+  const bottom = BOX.bl + BOX.h.repeat(width - 2) + BOX.br;
+  return [top, ...body, bottom];
+}
+
+/** Pad a string to a target visible width. */
+function padRight(s: string, width: number): string {
+  const visible = visibleLength(s);
+  return s + " ".repeat(Math.max(0, width - visible));
+}
+
+/** Measure visible string length (strip ANSI-ish color tags from our Theme stub). */
+export function visibleLength(s: string): number {
+  return s.replace(/\[[a-z]+\]/g, "").replace(/\u001b\[[0-9;]*m/g, "").length;
+}
+
+/** Format a single call's summary line for display. */
+export function formatCallSummary(ref: string, status: string, durationMs: number | undefined, metrics?: { tokens?: number; cost?: number }): string {
+  const glyph = statusGlyph(status);
+  const dur = durationMs !== undefined ? ` ${formatDuration(durationMs)}` : "";
+  const tok = metrics?.tokens !== undefined ? ` ${formatTokens(metrics.tokens)} tok` : "";
+  const cst = metrics?.cost !== undefined && metrics.cost > 0 ? ` ${formatCost(metrics.cost)}` : "";
+  return `${glyph} ${ref}${dur}${tok}${cst}`;
 }

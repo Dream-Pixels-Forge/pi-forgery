@@ -106,3 +106,71 @@ test("store: agent add + update + agents() order", () => {
   assert.equal(store.agents()[0].status, "running");
   assert.equal(store.agents().length, 1);
 });
+
+test("store: updateAgent with an unchanged patch does not bump the revision", () => {
+  const store = new ForgeryActivityStore();
+  const agent = {
+    id: "a1",
+    name: "agent",
+    task: "t",
+    status: "queued" as const,
+    startedAt: 0,
+    updatedAt: 0,
+  };
+  store.addAgent(agent);
+  const before = store.revision();
+  // The UI re-syncs agents on every refresh; a no-op write must stay silent
+  // or the refresh loop spins forever.
+  store.updateAgent("a1", { ...agent });
+  assert.equal(store.revision(), before);
+});
+
+test("store: updateAgent with a changed field bumps the revision", () => {
+  const store = new ForgeryActivityStore();
+  store.addAgent({
+    id: "a1",
+    name: "agent",
+    task: "t",
+    status: "queued" as const,
+    startedAt: 0,
+    updatedAt: 0,
+  });
+  const before = store.revision();
+  store.updateAgent("a1", { status: "running" as const });
+  assert.equal(store.revision(), before + 1);
+  assert.equal(store.agents()[0].status, "running");
+});
+
+test("store: the snapshot clock is live without a store mutation", async () => {
+  const store = new ForgeryActivityStore();
+  const first = store.snapshot().now;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const second = store.snapshot().now;
+  assert.ok(second > first, `expected a live clock, got ${first} then ${second}`);
+});
+
+test("store: compact increments the run's compacts counter", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  const run = store.get("run-1")!;
+  assert.equal(run.compacts, 0);
+
+  const count1 = store.compact("run-1");
+  assert.equal(count1, 1);
+  assert.equal(store.get("run-1")!.compacts, 1);
+
+  const count2 = store.compact("run-1");
+  assert.equal(count2, 2);
+  assert.equal(store.get("run-1")!.compacts, 2);
+
+  // Compact on an unknown run returns 0 and does not throw.
+  assert.equal(store.compact("unknown"), 0);
+});
+
+test("store: compact bumps the revision", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+  const before = store.revision();
+  store.compact("run-1");
+  assert.ok(store.revision() > before);
+});

@@ -4,7 +4,7 @@
 - **Project:** pi-forgery
 - **Started:** 2026-06-15
 - **Current Phase:** 3 (Engineer) — complete
-- **Status:** v0.2.0 on main (PR #1 squash-merged eb56976; PR #2 merge 5a51b86; dep-sync 9f9b2a9)
+- **Status:** v0.4.0 (root) / v0.3.0 (extension)
 - **Repo:** https://github.com/Dream-Pixels-Forge/pi-forgery
 - **PRs:** https://github.com/Dream-Pixels-Forge/pi-forgery/pull/1, https://github.com/Dream-Pixels-Forge/pi-forgery/pull/2
 
@@ -16,26 +16,28 @@
 
 ## Active Tasks
 - All implementation tasks S1–S10 done, plus v0.2.0 (status line, footer,
-  dashboard) via PR #2. 38 unit tests green, typecheck green,
+  dashboard) via PR #2. 81 unit tests green, typecheck green,
   extension loads in a real `pi` session.
 - New: terminal image + video display (Kitty graphics protocol) — `pi.showImage`,
   `pi.showImages`, `pi.showVideo` host calls + `/forgery image <path>`,
   `/forgery video <path>` commands. Video uses ffmpeg frame extraction.
-- Fixed: footer not updating — `refresh()` now re-mounts the footer factory
-  so the TUI re-renders on every activity-store/agent-revision change.
-
-## Blockers
-- None.
+- Fixed: footer not updating — live context/model/effort reads, live snapshot
+  clock, no-op writes stay silent, 1s heartbeat ticks elapsed time during a run.
+- Fixed: footer `compacts`/`issues`/`PRs`/`CI` segments now have live sources
+  (store.compact, GitHubStatsReader via `gh` CLI).
+- Fixed: footer/widget restyle on theme switch — `Theme` is now a live getter.
+- Fixed: `store.compact(runId)` now auto-triggered when context usage > 85%
+  (60s cooldown to prevent refresh loops).
+- Improved: `forgery_exec` output renders in a box-drawing border with run ID,
+  status, duration, per-call breakdown (ref · status · duration · tokens · cost),
+  and result/error sections.
+- Improved: version bumped to 0.4.0 (root) / 0.3.0 (extension).
 
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.
-- Tests: `npx tsx --test tests/*.test.ts` → 59/59 pass, 0 skipped.
-- Smoke: `pi -e ./extensions/forgery --print …` loads the extension without
-  crashing (reaches the LLM stage; a 401 without an API key is expected).
-- Hygiene audit at merge: no debug leftovers, no TODO/FIXME/console.log,
-  no secrets, sane dependency tree.
-- Merged main re-verified post-merge (PR #1 and PR #2, and again after the
-  9f9b2a9 dep-sync): typecheck PASS, 38/38 tests PASS, live `pi -e` smoke PASS.
+- Tests: `npx tsx --test tests/*.test.ts` → 81/81 pass, 0 skipped.
+- Build: `npm run build` → clean `dist/` bundle.
+- Live `pi -e` smoke: PASS (extension loads and responds inside pi, which already has API keys configured — no separate API key needed).
 
 ## Decisions Made
 - 2026-06-15: Adopt the local DPF extension layout `extensions/forgery/index.ts`

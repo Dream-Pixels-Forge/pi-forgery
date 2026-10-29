@@ -55,6 +55,7 @@ import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
 import { createResolver } from "../workflow/resolver";
 import { showImage, showImages, showVideo, type ShowImageResult } from "./display";
+import { box, formatCallSummary, formatDuration } from "../ui/format";
 
 const execFileAsync = promisify(execFile);
 
@@ -722,17 +723,55 @@ export function createForgeryExecTool(
         value: outcome.value,
         error: outcome.error,
       };
-      ctx.ui.setStatus(
-        "forgery",
-        ok ? "forgery_exec: ok" : `forgery_exec: ${outcome.error?.slice(0, 40) ?? "failed"}`,
-      );
+      // Build a beautiful boxed result with useful information.
+      const runIdShort = runId.slice(0, 8);
+      const durationMs = run ? Date.now() - run.startedAt : undefined;
+      const lines: string[] = [];
 
-      const contentText = ok
-        ? `forgery_exec ${details.runId.slice(0, 8)} · ${details.calls} calls\n${safeToolResultText(outcome.value)}`
-        : `forgery_exec ${details.runId.slice(0, 8)} failed: ${outcome.error}`;
+      // Header: status + run id + duration.
+      const statusLabel = ok ? "ok" : "failed";
+      lines.push(
+        `forgery_exec · ${runIdShort} · ${statusLabel}${
+          durationMs !== undefined ? ` · ${formatDuration(durationMs)}` : ""
+        } · ${calls} call${calls !== 1 ? "s" : ""}`,
+      );
+      lines.push("");
+
+      // Per-call breakdown.
+      if (run && run.calls.length > 0) {
+        lines.push("calls:");
+        for (const call of run.calls) {
+          const callDur =
+            call.finishedAt && call.startedAt
+              ? call.finishedAt - call.startedAt
+              : undefined;
+          lines.push(
+            `  ${formatCallSummary(call.ref, call.status, callDur, call.metrics)}`,
+          );
+        }
+        lines.push("");
+      }
+
+      // Result value or error.
+      if (ok) {
+        const valueText = safeToolResultText(outcome.value);
+        if (valueText) {
+          lines.push("result:");
+          for (const line of valueText.split("\n")) {
+            lines.push(`  ${line}`);
+          }
+        } else {
+          lines.push("result: (no return value)");
+        }
+      } else {
+        lines.push("error:");
+        lines.push(`  ${outcome.error ?? "unknown error"}`);
+      }
+
+      const boxed = box(lines, "forgery_exec");
 
       return {
-        content: [{ type: "text" as const, text: contentText }],
+        content: [{ type: "text" as const, text: boxed.join("\n") }],
         details,
       };
     },

@@ -1,6 +1,6 @@
 {
   "name": "forgery",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Improved pi-fabric reimplementation: programmable forgery_exec tool, one-shot agents, activity widget, status-line footer, and /forgery dashboard for Pi",
   "main": "index.ts",
   "type": "module",

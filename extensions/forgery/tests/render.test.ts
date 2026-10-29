@@ -23,9 +23,7 @@ test("ForgeryFooter: renders idle when no runs", () => {
   const store = new ForgeryActivityStore();
   const footerCtx: ForgeryFooterContext = {
     gitBranch: () => "main",
-    contextPercent: () => 42,
-    contextTokens: () => 21_300,
-    contextTokensMax: () => 32_000,
+    contextUsage: () => ({ tokens: 21_300, contextWindow: 32_000, percent: 42 }),
     modelId: () => "minimax/minimax-m3.1-flash",
     effort: () => "medium",
     cwd: () => "/home/user/my-project",
@@ -37,7 +35,7 @@ test("ForgeryFooter: renders idle when no runs", () => {
     prsClosed: () => 5,
     ciStatus: () => "green",
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /main/);
@@ -58,9 +56,7 @@ test("ForgeryFooter: renders active run metrics", () => {
 
   const footerCtx: ForgeryFooterContext = {
     gitBranch: () => null,
-    contextPercent: () => null,
-    contextTokens: () => null,
-    contextTokensMax: () => null,
+    contextUsage: () => null,
     modelId: () => undefined,
     effort: () => null,
     cwd: () => null,
@@ -72,7 +68,7 @@ test("ForgeryFooter: renders active run metrics", () => {
     prsClosed: () => null,
     ciStatus: () => null,
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /demo/);
@@ -86,9 +82,7 @@ test("ForgeryFooter: statusString() mirrors a compact line", () => {
   const store = new ForgeryActivityStore();
   const footerCtx: ForgeryFooterContext = {
     gitBranch: () => null,
-    contextPercent: () => null,
-    contextTokens: () => null,
-    contextTokensMax: () => null,
+    contextUsage: () => null,
     modelId: () => undefined,
     effort: () => null,
     cwd: () => null,
@@ -100,7 +94,7 @@ test("ForgeryFooter: statusString() mirrors a compact line", () => {
     prsClosed: () => null,
     ciStatus: () => null,
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   assert.equal(footer.statusString(), "forgery · idle");
 
   store.start("run-2", { name: "busy" });
@@ -115,7 +109,7 @@ test("ForgeryWidget: shouldShow true when a run is active", () => {
     release: () => {},
     requestRender: () => {},
   };
-  const widget = new ForgeryWidget(stubTheme(), () => store.snapshot(), 8, { retainMs: 5000 }, interaction);
+  const widget = new ForgeryWidget(() => stubTheme(), () => store.snapshot(), 8, { retainMs: 5000 }, interaction);
   assert.equal(widget.shouldShow(store.snapshot()), false);
 
   store.start("run-3", { name: "now" });
@@ -125,4 +119,26 @@ test("ForgeryWidget: shouldShow true when a run is active", () => {
   const lines = widget.render(120);
   assert.ok(lines.length >= 1);
   assert.match(lines[0], /now/);
+});
+
+test("ForgeryFooter: clamps a context percentage above 100", () => {
+  const store = new ForgeryActivityStore();
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => ({ tokens: 250_000, contextWindow: 200_000, percent: 125 }),
+    modelId: () => undefined,
+    effort: () => null,
+    cwd: () => null,
+    compactCount: () => null,
+    compactMax: () => null,
+    issuesOpen: () => null,
+    issuesClosed: () => null,
+    prsOpen: () => null,
+    prsClosed: () => null,
+    ciStatus: () => null,
+  };
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
+  // Pi does not clamp `percent`; the bar must not build a negative repeat count.
+  assert.doesNotThrow(() => footer.render(200));
+  assert.match(footer.render(200)[0], /125%/);
 });

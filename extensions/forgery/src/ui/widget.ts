@@ -14,6 +14,7 @@ import type { Component, Focusable } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ForgeryAgentRecord, ForgerySnapshot } from "../activity/types";
 import {
+  animatedStatusGlyph,
   colorSafe,
   colorStatus,
   formatCost,
@@ -54,15 +55,17 @@ export class ForgeryWidget implements Component, Focusable {
   scroll = 0;
   /** Last rendered row count, used to detect "changed" for invalidation. */
   #lastRows = 0;
+  /** Frame counter used to animate the "working" spinner while a run is active. */
+  #frame = 0;
 
-  private theme: Theme;
+  private theme: () => Theme;
   private snapshot: () => ForgerySnapshot;
   private maxRows: number;
   private retention?: ForgeryWidgetRetention;
   private interaction?: ForgeryWidgetInteraction;
 
   constructor(
-    theme: Theme,
+    theme: () => Theme,
     snapshot: () => ForgerySnapshot,
     maxRows = 8,
     retention?: ForgeryWidgetRetention,
@@ -124,7 +127,7 @@ export class ForgeryWidget implements Component, Focusable {
 
   render(width: number): string[] {
     const snap = this.snapshot();
-    const theme = this.theme;
+    const theme = this.theme();
     const active = snap.runs.find((r) => r.status === "running");
     const maxRows = Math.max(2, Math.min(this.maxRows, Math.floor((process.stdout.rows ?? 40) * WIDGET_TERMINAL_ROW_SHARE)));
 
@@ -133,11 +136,14 @@ export class ForgeryWidget implements Component, Focusable {
       return [this.#idleLine(theme, width, snap)];
     }
 
+    // Advance the spinner frame on every render while a run is active.
+    this.#frame += 1;
+
     // Header line.
-    const header = this.#headerLine(theme, snap, active, width);
+    const header = this.#headerLine(theme, snap, active, width, this.#frame);
 
     // Participant rows.
-    const agents = this.#participantRows(theme, snap, width, Math.max(0, maxRows - 1 - (this.expandedId ? 0 : 0)));
+    const agents = this.#participantRows(theme, snap, width, Math.max(0, maxRows - 1 - (this.expandedId ? 0 : 0)), this.#frame);
 
     // Expanded transcript pane.
     if (this.expandedId) {
@@ -168,28 +174,45 @@ export class ForgeryWidget implements Component, Focusable {
     return ` ${theme.fg("dim", "forgery · idle")}`.slice(0, width);
   }
 
-  #headerLine(theme: Theme, snap: ForgerySnapshot, active: { name: string; startedAt: number }, width: number): string {
+  #headerLine(
+    theme: Theme,
+    snap: ForgerySnapshot,
+    active: { name: string; startedAt: number },
+    width: number,
+    frame: number,
+  ): string {
     const totals = snap.activeTotals;
     const tokens = totals?.tokens ? ` ${formatTokens(totals.tokens)} tok` : "";
     const cost = totals?.cost ? ` ${formatCost(totals.cost)}` : "";
     const calls = totals ? ` ${totals.calls} calls` : "";
     const dur = active.startedAt ? ` ${formatDuration(snap.now - active.startedAt)}` : "";
-    const glyph = colorStatus(theme, "running");
+    // Animated spinner while working; colored accent so "running" stands out.
+    const glyph = theme.fg("accent", animatedStatusGlyph("running", frame));
     const line = ` ${glyph} ${theme.fg("text", theme.bold("forgery"))} ${theme.fg("muted", active.name)} ·${calls}${tokens}${cost}${dur}`;
     return truncateToWidth(line, width, "…");
   }
 
-  #participantRows(theme: Theme, snap: ForgerySnapshot, width: number, max: number): string[] {
+  #participantRows(
+    theme: Theme,
+    snap: ForgerySnapshot,
+    width: number,
+    max: number,
+    frame: number,
+  ): string[] {
     const rows: string[] = [];
     // Active agents first, then running recent ones, then terminal.
     const agents = snap.agents.filter((a) => a.status !== "completed" || a.current);
-    const agentRows = agents.slice(0, 3).map((a) => this.#agentRow(theme, a, width));
+    const agentRows = agents.slice(0, 3).map((a) => this.#agentRow(theme, a, width, frame));
     rows.push(...agentRows);
     return rows.slice(0, max > 0 ? max : rows.length);
   }
 
-  #agentRow(theme: Theme, agent: ForgeryAgentRecord, width: number): string {
-    const glyph = colorStatus(theme, agent.status);
+  #agentRow(theme: Theme, agent: ForgeryAgentRecord, width: number, frame: number): string {
+    // Running agents get the animated spinner; everything else keeps a static glyph.
+    const glyph =
+      agent.status === "running"
+        ? theme.fg("accent", animatedStatusGlyph("running", frame))
+        : colorStatus(theme, agent.status);
     const current = agent.current ? ` ${theme.fg("dim", truncate(agent.current, 40))}` : "";
     const line = `  ${glyph} ${theme.fg("text", theme.bold(agent.name))}${current}`;
     return truncateToWidth(line, width, "…");

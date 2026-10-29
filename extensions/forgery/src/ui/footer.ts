@@ -13,11 +13,12 @@
  * live run when another extension reclaims the custom footer slot.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ContextUsage, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ForgerySnapshot } from "../activity/types";
 import {
+  animatedStatusGlyph,
   colorStatus,
   formatCost,
   formatDuration,
@@ -32,15 +33,14 @@ import {
 export interface ForgeryFooterContext {
   /** Current git branch, or null if not in a repo. */
   gitBranch: () => string | null;
-  /** Context usage percent of the active model, or null (0–100). */
-  contextPercent: () => number | null;
-  /** Context tokens used, or null. */
-  contextTokens: () => number | null;
-  /** Context token limit, or null. */
-  contextTokensMax: () => number | null;
+  /**
+   * Live context usage for the active model, or null when unknown.
+   * Read on every render — Pi recomputes it on each call.
+   */
+  contextUsage: () => ContextUsage | null;
   /** The active model id (e.g. "minimax/minimax-m3.1-flash"), or undefined. */
   modelId: () => string | undefined;
-  /** Thinking/effort level: "low" | "medium" | "high", or null. */
+  /** Thinking/effort level (Pi's ThinkingLevel), or null. */
   effort: () => string | null;
   /** Working directory, or null. */
   cwd: () => string | null;
@@ -67,26 +67,24 @@ export interface ForgeryFooterContext {
  * ~100 ms and calls `invalidate()` when the revision changes.
  */
 export class ForgeryFooter implements Component {
-  private theme: Theme;
+  private theme: () => Theme;
   private snapshot: () => ForgerySnapshot;
   private footerCtx: ForgeryFooterContext;
-  /** Set when the controller signals new data; render() clears it. */
-  private _dirty = false;
+  /** Frame counter used to animate the "working" spinner while a run is active. */
+  #frame = 0;
 
-  constructor(theme: Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
+  constructor(theme: () => Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
     this.theme = theme;
     this.snapshot = snapshot;
     this.footerCtx = footerCtx;
   }
 
-  invalidate(): void {
-    this._dirty = true;
-  }
-
-  /** Whether new data is pending since last render. */
-  isDirty(): boolean {
-    return this._dirty;
-  }
+  /**
+   * pi-tui calls this when the theme changes or the component must re-render
+   * from scratch. The footer keeps no cached rendering state — it reads live
+   * data on every render — so there is nothing to discard.
+   */
+  invalidate(): void {}
 
   /**
    * The compact status string also written to `setStatus("forgery", …)`.
@@ -94,6 +92,7 @@ export class ForgeryFooter implements Component {
    * custom footer slot.
    */
   statusString(): string {
+    this.#frame += 1;
     const snap = this.snapshot();
     const active = snap.runs.find((r) => r.status === "running");
     if (!active) {
@@ -108,7 +107,7 @@ export class ForgeryFooter implements Component {
     }
     const totals = snap.activeTotals;
     return statusLine([
-      `◐ ${active.name}`,
+      `${animatedStatusGlyph("running", this.#frame)} ${active.name}`,
       totals ? `${totals.calls} calls` : undefined,
       totals?.tokens ? `${formatTokens(totals.tokens)} tok` : undefined,
       totals?.cost ? formatCost(totals.cost) : undefined,
@@ -119,15 +118,19 @@ export class ForgeryFooter implements Component {
   /** Render a compact progress bar: "[████░░░░] 45%". */
   #progressBar(pct: number | null | undefined, width = 8): string {
     if (pct === null || pct === undefined) return "—";
-    const filled = Math.round((pct / 100) * width);
+    // Pi does not clamp `percent`, so an over-full context would otherwise
+    // produce a negative repeat count.
+    const clamped = Math.max(0, Math.min(100, pct));
+    const filled = Math.round((clamped / 100) * width);
     const empty = width - filled;
-    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${pct}%`;
+    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${formatPercent(pct)}`;
   }
 
   render(width: number): string[] {
-    this._dirty = false;
     const snap = this.snapshot();
-    const theme = this.theme;
+    const theme = this.theme();
+    // Advance the spinner frame on every render while a run is active.
+    this.#frame += 1;
     const branch = (() => {
       try {
         return this.footerCtx.gitBranch();
@@ -135,9 +138,10 @@ export class ForgeryFooter implements Component {
         return null;
       }
     })();
-    const pct = this.footerCtx.contextPercent();
-    const tokens = this.footerCtx.contextTokens();
-    const tokensMax = this.footerCtx.contextTokensMax();
+    const usage = this.footerCtx.contextUsage();
+    const pct = usage?.percent ?? null;
+    const tokens = usage?.tokens ?? null;
+    const tokensMax = usage?.contextWindow ?? null;
     const model = this.footerCtx.modelId();
     const effort = this.footerCtx.effort();
     const cwd = this.footerCtx.cwd();
@@ -161,9 +165,7 @@ export class ForgeryFooter implements Component {
       ? theme.fg(
           "muted",
           `ctx ${this.#progressBar(pct, 6)} ${formatPercent(pct)}${
-            tokens !== null || tokensMax !== null
-              ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}`
-              : ""
+            tokens !== null ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}` : ""
           }`,
         )
       : theme.fg("dim", "ctx —");
@@ -219,7 +221,7 @@ export class ForgeryFooter implements Component {
     if (active) {
       const totals = snap.activeTotals;
       const parts = statusLine([
-        `${colorStatus(theme, "running")} ${active.name}`,
+        `${theme.fg("accent", animatedStatusGlyph("running", this.#frame))} ${active.name}`,
         totals ? `${totals.calls} calls` : undefined,
         totals?.tokens ? `${formatTokens(totals.tokens)} tok` : undefined,
         totals?.cost ? formatCost(totals.cost) : undefined,
@@ -256,7 +258,8 @@ export class ForgeryFooter implements Component {
 
     const singleLeft = partsLeft.join("  ·  ");
     const singleRight = partsRight.join("  ·  ");
-    const single = `${singleLeft}${singleRight.length > 0 ? "  ·  " + singleRight : ""}`;
+    // Run/agent status (animated spinner) first — most visible above the input.
+    const single = `${singleRight}${singleLeft.length > 0 ? "  ·  " + singleLeft : ""}`;
     const fitted = truncateToWidth(single, width, "…");
     // Wide enough for one line? Strip ANSI codes and stub-theme color tags
     // to measure visible width.
@@ -268,9 +271,9 @@ export class ForgeryFooter implements Component {
       return [fitted];
     }
 
-    // Two-line layout: meta on top, run on bottom.
-    const line1 = partsLeft.join("  ·  ");
-    const line2 = partsRight.join("  ·  ");
+    // Two-line layout: run status on top (above), context/meta at the bottom.
+    const line1 = partsRight.join("  ·  ");
+    const line2 = partsLeft.join("  ·  ");
     return [
       truncateToWidth(line1, width, "…"),
       truncateToWidth(line2, width, "…"),

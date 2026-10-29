@@ -64,6 +64,7 @@ export class ForgeryActivityStore {
       startedAt: now(),
       updatedAt: now(),
       cwd: cwd ?? "",
+      compacts: 0,
       metrics: { toolCalls: 0, tokens: 0, cost: 0 },
     };
     this.#runs.set(runId, run);
@@ -87,6 +88,7 @@ export class ForgeryActivityStore {
       startedAt: t,
       updatedAt: t,
       cwd: cwd ?? "",
+      compacts: 0,
       metrics: { toolCalls: 0, tokens: 0, cost: 0 },
     };
     this.#runs.set(runId, run);
@@ -119,6 +121,16 @@ export class ForgeryActivityStore {
 
   cancel(runId: string): void {
     this.finish(runId, false, "cancelled");
+  }
+
+  /** Record a compact (context reset) on the run. Returns the new compact count. */
+  compact(runId: string): number {
+    const run = this.#runs.get(runId);
+    if (!run) return 0;
+    run.compacts += 1;
+    run.updatedAt = now();
+    this.#notify();
+    return run.compacts;
   }
 
   // ── phases ─────────────────────────────────────────────────────────────
@@ -314,13 +326,26 @@ export class ForgeryActivityStore {
   // ── agents (one-shot, observed from the runner) ────────────────────────
 
   addAgent(agent: ForgeryAgentRecord): void {
-    this.#agents.set(agent.id, agent);
+    // Own a copy: the runner mutates its records in place, so sharing the
+    // reference would hide changes from the store's change detection.
+    this.#agents.set(agent.id, { ...agent });
     this.#notify();
   }
 
   updateAgent(agentId: string, patch: Partial<ForgeryAgentRecord>): void {
     const agent = this.#agents.get(agentId);
     if (!agent) return;
+    // The UI re-syncs agents on every refresh. A no-op write must stay
+    // silent, or the notify would re-trigger the refresh forever.
+    let changed = false;
+    for (const key of Object.keys(patch) as (keyof ForgeryAgentRecord)[]) {
+      if (key === "updatedAt") continue;
+      if (!Object.is(agent[key], patch[key])) {
+        changed = true;
+        break;
+      }
+    }
+    if (!changed) return;
     Object.assign(agent, patch, { updatedAt: now() });
     this.#notify();
   }
@@ -361,10 +386,12 @@ export class ForgeryActivityStore {
   /**
    * Frozen projection of the activity surface. Reused until the store
    * mutates (checked by revision), so high-frequency UI polling does not
-   * repeatedly deep-copy large call payloads.
+   * repeatedly deep-copy large call payloads. The clock stays live: elapsed
+   * time readouts must advance even when the store has not mutated.
    */
   createSnapshot(): ForgerySnapshot {
     if (this.#frozenRevision === this.#revision && this.#frozenView.length > 0) {
+      this.#frozenView[0].now = now();
       return this.#frozenView[0];
     }
     const snapshot: ForgerySnapshot = {
