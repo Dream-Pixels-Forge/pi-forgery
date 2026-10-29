@@ -13,7 +13,9 @@ Improved pi-fabric reimplementation: programmable forgery_exec tool, one-shot ag
 
 ### Activity Tracking
 - Real-time activity widget (above editor) showing active runs and agent status
-- Custom status-line footer with git branch, context usage, and run metrics
+- Custom status-line footer with git branch, context progress bar + percent,
+  model name + effort level, working directory (basename), compacts count,
+  issues/PRs, CI status, and active run status (calls, tokens, cost, duration)
 - Full-screen dashboard (/forgery) with activity timeline and settings view
 - Detailed logging of all tool calls, agent runs, and phase transitions
 

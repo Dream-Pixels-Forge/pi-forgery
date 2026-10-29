@@ -25,15 +25,26 @@ test("ForgeryFooter: renders idle when no runs", () => {
     gitBranch: () => "main",
     contextPercent: () => 42,
     contextTokens: () => 21_300,
-    modelId: () => "claude-sonnet",
+    contextTokensMax: () => 32_000,
+    modelId: () => "minimax/minimax-m3.1-flash",
+    effort: () => "medium",
+    cwd: () => "/home/user/my-project",
+    compactCount: () => 1,
+    compactMax: () => 5,
+    issuesOpen: () => 3,
+    issuesClosed: () => 12,
+    prsOpen: () => 1,
+    prsClosed: () => 5,
+    ciStatus: () => "green",
   };
   const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /main/);
   assert.match(lines[0], /42%/);
-  assert.match(lines[0], /claude-sonnet/);
-  assert.match(lines[0], /idle/);
+  assert.match(lines[0], /m3\.1-flash/);
+  assert.match(lines[0], /med/); // effort short form
+  assert.match(lines[0], /my-project/);
 });
 
 test("ForgeryFooter: renders active run metrics", () => {
@@ -49,7 +60,17 @@ test("ForgeryFooter: renders active run metrics", () => {
     gitBranch: () => null,
     contextPercent: () => null,
     contextTokens: () => null,
+    contextTokensMax: () => null,
     modelId: () => undefined,
+    effort: () => null,
+    cwd: () => null,
+    compactCount: () => null,
+    compactMax: () => null,
+    issuesOpen: () => null,
+    issuesClosed: () => null,
+    prsOpen: () => null,
+    prsClosed: () => null,
+    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
@@ -67,7 +88,17 @@ test("ForgeryFooter: statusString() mirrors a compact line", () => {
     gitBranch: () => null,
     contextPercent: () => null,
     contextTokens: () => null,
+    contextTokensMax: () => null,
     modelId: () => undefined,
+    effort: () => null,
+    cwd: () => null,
+    compactCount: () => null,
+    compactMax: () => null,
+    issuesOpen: () => null,
+    issuesClosed: () => null,
+    prsOpen: () => null,
+    prsClosed: () => null,
+    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
   assert.equal(footer.statusString(), "forgery · idle");

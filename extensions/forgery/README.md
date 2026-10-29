@@ -22,7 +22,7 @@ The `forgery_exec` tool lets you write TypeScript programs that:
 
 ### Activity Tracking & Observability
 - **Activity Widget**: Always-visible status above the editor
-- **Status Line Footer**: Git branch, context usage, and runtime metrics
+- **Status Line Footer**: Git branch, context progress bar + percent, model name + effort level, working directory, tokens, compacts count, issues/PRs, CI status, and active run status (calls, tokens, cost, duration)
 - **Dashboard**: Full-screen interface (`/forgery dashboard`) with:
   - Activity timeline and phase tracking
   - Agent monitoring and logs

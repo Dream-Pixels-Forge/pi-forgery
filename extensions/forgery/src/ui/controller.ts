@@ -233,11 +233,29 @@ export class ForgeryUiController {
 
   #mountFooter(ctx: ExtensionContext): void {
     if (!this.options.footer || !this.ui) return;
+    const ctxUsage = ctx.getContextUsage() as Record<string, unknown> | undefined;
+    const ctxModel = ctx.model as { id?: string; effort?: string | number } | undefined;
     const footerCtx: ForgeryFooterContext = {
       gitBranch: () => this.gitBranchReader.getBranch(),
-      contextPercent: () => ctx.getContextUsage()?.percent ?? null,
-      contextTokens: () => ctx.getContextUsage()?.tokens ?? null,
-      modelId: () => (ctx.model as { id?: string } | undefined)?.id,
+      contextPercent: () => (ctxUsage?.percent as number | undefined) ?? null,
+      contextTokens: () => (ctxUsage?.tokens as number | undefined) ?? null,
+      contextTokensMax: () =>
+        ((ctxUsage?.maxTokens as number | undefined) ??
+          (ctxUsage?.max as number | undefined)) ??
+        null,
+      modelId: () => ctxModel?.id,
+      effort: () =>
+        (ctxUsage?.effort as string | undefined) ??
+        (typeof ctxModel?.effort === "string" ? ctxModel.effort : undefined) ??
+        null,
+      cwd: () => ctx.cwd ?? undefined,
+      compactCount: () => (ctxUsage?.compactCount as number | undefined) ?? null,
+      compactMax: () => (ctxUsage?.compactMax as number | undefined) ?? null,
+      issuesOpen: () => (ctxUsage?.issuesOpen as number | undefined) ?? null,
+      issuesClosed: () => (ctxUsage?.issuesClosed as number | undefined) ?? null,
+      prsOpen: () => (ctxUsage?.prsOpen as number | undefined) ?? null,
+      prsClosed: () => (ctxUsage?.prsClosed as number | undefined) ?? null,
+      ciStatus: () => (ctxUsage?.ciStatus as string | undefined) ?? null,
     };
     this.footer = new ForgeryFooter(this.ui.theme, () => this.store.snapshot(), footerCtx);
     // Mount: setFooter takes a factory `(tui, theme, footerData) => Component`.
