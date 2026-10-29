@@ -25,6 +25,8 @@ import { formatCost, formatDuration, formatTokens, statusGlyph } from "./format"
 import { GitBranchReader } from "../git";
 
 const REFRESH_MS = 100;
+/** How often the TUI is asked for a frame so live readouts keep ticking. */
+const HEARTBEAT_MS = 1000;
 const STATUS_KEY = "forgery";
 
 export interface ForgeryUiOptions {
@@ -44,9 +46,12 @@ export class ForgeryUiController {
   private options: Required<ForgeryUiOptions>;
 
   private ui?: ExtensionUIContext;
+  /** The live extension context — read on demand, never captured by value. */
+  private ctx?: ExtensionContext;
   private footer?: ForgeryFooter;
   private widget?: ForgeryWidget;
   private refreshTimer?: NodeJS.Timeout;
+  private heartbeat?: NodeJS.Timeout;
   private unsubscribeStore?: () => void;
   private unsubscribeAgents?: () => void;
   private started = false;
@@ -73,6 +78,9 @@ export class ForgeryUiController {
 
   /** Start the UI: subscribe + mount widget/footer. Idempotent. */
   start(ctx: ExtensionContext): void {
+    // Always take the newest context: Pi invalidates the previous one on
+    // newSession/fork/switchSession/reload, and the footer reads it live.
+    this.ctx = ctx;
     if (this.started) return;
     this.started = true;
     this.ui = ctx.ui;
@@ -83,6 +91,10 @@ export class ForgeryUiController {
     this.#mountWidget(ctx);
     this.#mountFooter(ctx);
     this.refresh();
+    // pi-tui renders on demand, so ask for a frame once a second — otherwise
+    // elapsed time and context usage freeze whenever nothing else changes.
+    this.heartbeat = setInterval(() => this.#tick(), HEARTBEAT_MS);
+    this.heartbeat.unref?.();
   }
 
   /** Stop the UI: unsubscribe + unmount. Idempotent. */
@@ -92,10 +104,13 @@ export class ForgeryUiController {
     this.unsubscribeStore?.();
     this.unsubscribeAgents?.();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
     this.ui?.setWidget("forgery", undefined, { placement: "aboveEditor" });
     if (this.options.footer) this.ui?.setFooter(undefined);
     this.ui?.setStatus(STATUS_KEY, undefined);
     this.ui = undefined;
+    this.ctx = undefined;
     this.footer = undefined;
     this.widget = undefined;
   }
@@ -106,27 +121,25 @@ export class ForgeryUiController {
     this.#syncAgentsToStore();
     const snap = this.store.snapshot();
 
-    // Mirror a compact string into the built-in footer slot.
+    // Mirror a compact string into the built-in footer slot. This is also the
+    // cheapest host call that asks the TUI for a frame.
     const status = this.#statusString(snap);
     this.ui.setStatus(STATUS_KEY, status || undefined);
 
-    // Re-mount the footer so the TUI picks up invalidation (the footer's
-    // render() reads fresh data from the snapshot on every call).
-    if (this.footer) {
-      this.footer.invalidate();
-      this.#remountFooter();
-    }
     this.#syncWidget(snap);
   }
 
-  /** Re-register the footer factory so the TUI re-renders it on next frame. */
-  #remountFooter(): void {
-    if (!this.ui || !this.footer) return;
-    const footerRef = this.footer;
-    this.ui.setFooter(
-      (_tui: TUI, _theme: Theme, _footerData: unknown): Component & { dispose?(): void } =>
-        footerRef as unknown as Component & { dispose?(): void },
-    );
+  /** Ask the TUI for a frame so live readouts keep ticking. */
+  #tick(): void {
+    if (!this.ui || !this.started) return;
+    const snap = this.store.snapshot();
+    // Only poll while something is actually running: that is the only case
+    // where a readout can change without Pi rendering on its own.
+    const live =
+      snap.runs.some((r) => r.status === "running") ||
+      snap.agents.some((a) => a.status === "running");
+    if (!live) return;
+    this.ui.setStatus(STATUS_KEY, this.#statusString(snap) || undefined);
   }
 
   /**
@@ -196,6 +209,20 @@ export class ForgeryUiController {
     return (this.ui as unknown as { tui?: TUI }).tui;
   }
 
+  /**
+   * Read a live value off the current extension context. Pi throws from
+   * context getters once the context has been invalidated (newSession, fork,
+   * switchSession, reload), so a failure degrades to "unknown" rather than
+   * breaking the TUI render path.
+   */
+  #read<T>(fn: (ctx: ExtensionContext) => T): T | undefined {
+    try {
+      return this.ctx ? fn(this.ctx) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   #syncAgentsToStore(): void {
     for (const agent of this.runner.listForUi()) {
       const existing = this.store.agent(agent.id);
@@ -246,31 +273,23 @@ export class ForgeryUiController {
     );
   }
 
-  #mountFooter(ctx: ExtensionContext): void {
+  #mountFooter(_ctx: ExtensionContext): void {
     if (!this.options.footer || !this.ui) return;
-    const ctxUsage = ctx.getContextUsage() as Record<string, unknown> | undefined;
-    const ctxModel = ctx.model as { id?: string; effort?: string | number } | undefined;
     const footerCtx: ForgeryFooterContext = {
       gitBranch: () => this.gitBranchReader.getBranch(),
-      contextPercent: () => (ctxUsage?.percent as number | undefined) ?? null,
-      contextTokens: () => (ctxUsage?.tokens as number | undefined) ?? null,
-      contextTokensMax: () =>
-        ((ctxUsage?.maxTokens as number | undefined) ??
-          (ctxUsage?.max as number | undefined)) ??
-        null,
-      modelId: () => ctxModel?.id,
-      effort: () =>
-        (ctxUsage?.effort as string | undefined) ??
-        (typeof ctxModel?.effort === "string" ? ctxModel.effort : undefined) ??
-        null,
-      cwd: () => ctx.cwd ?? undefined,
-      compactCount: () => (ctxUsage?.compactCount as number | undefined) ?? null,
-      compactMax: () => (ctxUsage?.compactMax as number | undefined) ?? null,
-      issuesOpen: () => (ctxUsage?.issuesOpen as number | undefined) ?? null,
-      issuesClosed: () => (ctxUsage?.issuesClosed as number | undefined) ?? null,
-      prsOpen: () => (ctxUsage?.prsOpen as number | undefined) ?? null,
-      prsClosed: () => (ctxUsage?.prsClosed as number | undefined) ?? null,
-      ciStatus: () => (ctxUsage?.ciStatus as string | undefined) ?? null,
+      // Read live on every render — Pi recomputes context usage per call.
+      contextUsage: () => this.#read((c) => c.getContextUsage()) ?? null,
+      modelId: () => this.#read((c) => c.model?.id),
+      effort: () => this.#read((c) => c.thinkingLevel) ?? null,
+      cwd: () => this.#read((c) => c.cwd) ?? null,
+      // No host source exists for these yet — they stay hidden until wired.
+      compactCount: () => null,
+      compactMax: () => null,
+      issuesOpen: () => null,
+      issuesClosed: () => null,
+      prsOpen: () => null,
+      prsClosed: () => null,
+      ciStatus: () => null,
     };
     this.footer = new ForgeryFooter(this.ui.theme, () => this.store.snapshot(), footerCtx);
     // Mount: setFooter takes a factory `(tui, theme, footerData) => Component`.

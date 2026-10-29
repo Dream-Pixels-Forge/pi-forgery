@@ -13,7 +13,7 @@
  * live run when another extension reclaims the custom footer slot.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { ContextUsage, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ForgerySnapshot } from "../activity/types";
@@ -32,12 +32,11 @@ import {
 export interface ForgeryFooterContext {
   /** Current git branch, or null if not in a repo. */
   gitBranch: () => string | null;
-  /** Context usage percent of the active model, or null (0–100). */
-  contextPercent: () => number | null;
-  /** Context tokens used, or null. */
-  contextTokens: () => number | null;
-  /** Context token limit, or null. */
-  contextTokensMax: () => number | null;
+  /**
+   * Live context usage for the active model, or null when unknown.
+   * Read on every render — Pi recomputes it on each call.
+   */
+  contextUsage: () => ContextUsage | null;
   /** The active model id (e.g. "minimax/minimax-m3.1-flash"), or undefined. */
   modelId: () => string | undefined;
   /** Thinking/effort level: "low" | "medium" | "high", or null. */
@@ -70,8 +69,6 @@ export class ForgeryFooter implements Component {
   private theme: Theme;
   private snapshot: () => ForgerySnapshot;
   private footerCtx: ForgeryFooterContext;
-  /** Set when the controller signals new data; render() clears it. */
-  private _dirty = false;
 
   constructor(theme: Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
     this.theme = theme;
@@ -79,14 +76,12 @@ export class ForgeryFooter implements Component {
     this.footerCtx = footerCtx;
   }
 
-  invalidate(): void {
-    this._dirty = true;
-  }
-
-  /** Whether new data is pending since last render. */
-  isDirty(): boolean {
-    return this._dirty;
-  }
+  /**
+   * pi-tui calls this when the theme changes or the component must re-render
+   * from scratch. The footer keeps no cached rendering state — it reads live
+   * data on every render — so there is nothing to discard.
+   */
+  invalidate(): void {}
 
   /**
    * The compact status string also written to `setStatus("forgery", …)`.
@@ -119,13 +114,15 @@ export class ForgeryFooter implements Component {
   /** Render a compact progress bar: "[████░░░░] 45%". */
   #progressBar(pct: number | null | undefined, width = 8): string {
     if (pct === null || pct === undefined) return "—";
-    const filled = Math.round((pct / 100) * width);
+    // Pi does not clamp `percent`, so an over-full context would otherwise
+    // produce a negative repeat count.
+    const clamped = Math.max(0, Math.min(100, pct));
+    const filled = Math.round((clamped / 100) * width);
     const empty = width - filled;
-    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${pct}%`;
+    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${formatPercent(pct)}`;
   }
 
   render(width: number): string[] {
-    this._dirty = false;
     const snap = this.snapshot();
     const theme = this.theme;
     const branch = (() => {
@@ -135,9 +132,10 @@ export class ForgeryFooter implements Component {
         return null;
       }
     })();
-    const pct = this.footerCtx.contextPercent();
-    const tokens = this.footerCtx.contextTokens();
-    const tokensMax = this.footerCtx.contextTokensMax();
+    const usage = this.footerCtx.contextUsage();
+    const pct = usage?.percent ?? null;
+    const tokens = usage?.tokens ?? null;
+    const tokensMax = usage?.contextWindow ?? null;
     const model = this.footerCtx.modelId();
     const effort = this.footerCtx.effort();
     const cwd = this.footerCtx.cwd();
