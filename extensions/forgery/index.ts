@@ -22,7 +22,10 @@ import { randomUUID } from "node:crypto";
 import { ForgeryActivityStore } from "./src/activity/store";
 import { AgentRunner } from "./src/agents/runner";
 import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
+<<<<<<< HEAD
 import { showImage, showVideo } from "./src/exec/display";
+=======
+>>>>>>> feat/gate-3-build
 import { ForgeryUiController } from "./src/ui/controller";
 import { createEngine } from "./src/workflow/engine";
 
