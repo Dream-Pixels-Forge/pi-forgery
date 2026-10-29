@@ -166,7 +166,7 @@ export interface ForgeryAgentRecord {
   finishedAt?: number;
 }
 
-/** Frozen, read-only view of the whole activity surface. */
+/** Read-only view of the whole activity surface. `now` is the live clock. */
 export interface ForgerySnapshot {
   now: number;
   /** Most-recent run first. */

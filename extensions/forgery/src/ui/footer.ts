@@ -39,7 +39,7 @@ export interface ForgeryFooterContext {
   contextUsage: () => ContextUsage | null;
   /** The active model id (e.g. "minimax/minimax-m3.1-flash"), or undefined. */
   modelId: () => string | undefined;
-  /** Thinking/effort level: "low" | "medium" | "high", or null. */
+  /** Thinking/effort level (Pi's ThinkingLevel), or null. */
   effort: () => string | null;
   /** Working directory, or null. */
   cwd: () => string | null;
@@ -159,9 +159,7 @@ export class ForgeryFooter implements Component {
       ? theme.fg(
           "muted",
           `ctx ${this.#progressBar(pct, 6)} ${formatPercent(pct)}${
-            tokens !== null || tokensMax !== null
-              ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}`
-              : ""
+            tokens !== null ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}` : ""
           }`,
         )
       : theme.fg("dim", "ctx —");
