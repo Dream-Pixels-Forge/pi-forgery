@@ -221,7 +221,11 @@ export class ForgeryFooter implements Component {
     } else {
       const recent = snap.runs[0];
       if (recent) {
-        runSeg = `${colorStatus(theme, recent.status)} ${recent.name} ${recent.status}`;
+        const dur =
+          recent.finishedAt && recent.startedAt
+            ? ` ${formatDuration(recent.finishedAt - recent.startedAt)}`
+            : "";
+        runSeg = `${colorStatus(theme, recent.status)} ${recent.name} ${recent.status}${dur}`;
       } else {
         runSeg = theme.fg("dim", "idle");
       }
