@@ -23,13 +23,30 @@
   `/forgery video <path>` commands. Video uses ffmpeg frame extraction.
 - Fixed: footer not updating — `refresh()` now re-mounts the footer factory
   so the TUI re-renders on every activity-store/agent-revision change.
+- Open PR #11 (`fix/footer-realtime-updates`, issue #10): the footer captured
+  `ctx.getContextUsage()` and `ctx.model` once at mount, so every host-backed
+  segment was frozen at extension-load values; the store's snapshot clock was
+  memoized by revision (frozen elapsed time); and `updateAgent` notified
+  unconditionally, spinning the controller in a 10 Hz refresh loop once any
+  agent existed. Now: live context/model/effort reads, a live snapshot clock,
+  no-op writes stay silent, a stale context degrades instead of throwing, and
+  a 1 s heartbeat keeps elapsed time ticking while a run is active. The
+  previous footer re-mount was removed — pi-tui repaints the footer every frame.
 
 ## Blockers
 - None.
 
+## Known Gaps
+- The footer’s `compacts`, `issues`, `PRs` and `CI` segments have no host
+  source (Pi exposes none of them); they need a `gh`/CI source of their own.
+- The footer captures the `Theme` instance at mount; a theme switch does not
+  restyle it until the extension remounts.
+
 ## Verification
 - Typecheck: `npx tsc --noEmit` (strict, no `skipLibCheck`) → exit 0.
 - Tests: `npx tsx --test tests/*.test.ts` → 59/59 pass, 0 skipped.
+- PR #11 (footer realtime fix): 66/66 pass, 0 skipped; typecheck and build
+  clean; live `pi -e` smoke PASS.
 - Smoke: `pi -e ./extensions/forgery --print …` loads the extension without
   crashing (reaches the LLM stage; a 401 without an API key is expected).
 - Hygiene audit at merge: no debug leftovers, no TODO/FIXME/console.log,
