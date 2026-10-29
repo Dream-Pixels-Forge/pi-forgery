@@ -67,13 +67,13 @@ export interface ForgeryFooterContext {
  * ~100 ms and calls `invalidate()` when the revision changes.
  */
 export class ForgeryFooter implements Component {
-  private theme: Theme;
+  private theme: () => Theme;
   private snapshot: () => ForgerySnapshot;
   private footerCtx: ForgeryFooterContext;
   /** Frame counter used to animate the "working" spinner while a run is active. */
   #frame = 0;
 
-  constructor(theme: Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
+  constructor(theme: () => Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
     this.theme = theme;
     this.snapshot = snapshot;
     this.footerCtx = footerCtx;
@@ -128,7 +128,7 @@ export class ForgeryFooter implements Component {
 
   render(width: number): string[] {
     const snap = this.snapshot();
-    const theme = this.theme;
+    const theme = this.theme();
     // Advance the spinner frame on every render while a run is active.
     this.#frame += 1;
     const branch = (() => {

@@ -29,11 +29,16 @@ import {
   statusGlyph,
 } from "./format";
 import { GitBranchReader } from "../git";
+import { GitHubStatsReader } from "../git/githubStats";
 
 const REFRESH_MS = 100;
 /** How often the TUI is asked for a frame so live readouts keep ticking. */
 const HEARTBEAT_MS = 1000;
 const STATUS_KEY = "forgery";
+/** Context percent above which we auto-compact the active run. */
+const COMPACT_THRESHOLD_PCT = 85;
+/** Minimum ms between automatic compactions to avoid refresh loops. */
+const COMPACT_COOLDOWN_MS = 60_000;
 
 export interface ForgeryUiOptions {
   /** Max widget rows. Defaults to 8. */
@@ -65,6 +70,9 @@ export class ForgeryUiController {
   #frame = 0;
   private hostCalls: string[];
   private gitBranchReader: GitBranchReader;
+  private githubStats: GitHubStatsReader;
+  /** Timestamp of the last auto-compaction, to enforce the cooldown. */
+  #lastCompactAt = 0;
 
   constructor(
     store: ForgeryActivityStore,
@@ -76,6 +84,7 @@ export class ForgeryUiController {
     this.runner = runner;
     this.hostCalls = hostCalls;
     this.gitBranchReader = new GitBranchReader();
+    this.githubStats = new GitHubStatsReader();
     this.options = {
       maxRows: options.maxRows ?? 8,
       retainMs: options.retainMs ?? 30_000,
@@ -129,12 +138,33 @@ export class ForgeryUiController {
     this.#syncAgentsToStore();
     const snap = this.store.snapshot();
 
+    // Auto-compact the active run when context usage is high, respecting the
+    // cooldown so a compact (which bumps the store revision) cannot retrigger
+    // refresh in an infinite loop.
+    this.#maybeCompact(snap);
+
     // Mirror a compact string into the built-in footer slot. This is also the
     // cheapest host call that asks the TUI for a frame.
     const status = this.#statusString(snap);
     this.ui.setStatus(STATUS_KEY, status || undefined);
 
     this.#syncWidget(snap);
+  }
+
+  /**
+   * Auto-compact the active run when context usage exceeds the threshold.
+   * Only compacts once per cooldown window to avoid refresh loops.
+   */
+  #maybeCompact(snap: ForgerySnapshot): void {
+    const now = Date.now();
+    if (now - this.#lastCompactAt < COMPACT_COOLDOWN_MS) return;
+    const usage = this.#read((c) => c.getContextUsage());
+    const pct = usage?.percent ?? 0;
+    if (pct < COMPACT_THRESHOLD_PCT) return;
+    const activeId = this.store.activeRunId();
+    if (!activeId) return;
+    this.store.compact(activeId);
+    this.#lastCompactAt = now;
   }
 
   /** Ask the TUI for a frame so live readouts keep ticking. */
@@ -263,7 +293,7 @@ export class ForgeryUiController {
       },
     };
     this.widget = new ForgeryWidget(
-      ui.theme,
+      () => ui.theme,
       () => this.store.snapshot(),
       this.options.maxRows,
       { retainMs: this.options.retainMs },
@@ -290,16 +320,20 @@ export class ForgeryUiController {
       modelId: () => this.#read((c) => c.model?.id),
       effort: () => this.#read((c) => c.thinkingLevel) ?? null,
       cwd: () => this.#read((c) => c.cwd) ?? null,
-      // No host source exists for these yet — they stay hidden until wired.
-      compactCount: () => null,
-      compactMax: () => null,
-      issuesOpen: () => null,
-      issuesClosed: () => null,
-      prsOpen: () => null,
-      prsClosed: () => null,
-      ciStatus: () => null,
+      // Compact (context reset) tracking lives in the activity store.
+      compactCount: () => {
+        const activeId = this.store.activeRunId();
+        const run = activeId ? this.store.get(activeId) : undefined;
+        return run?.compacts ?? null;
+      },
+      compactMax: () => 5,
+      issuesOpen: () => this.githubStats.issuesOpen(),
+      issuesClosed: () => this.githubStats.issuesClosed(),
+      prsOpen: () => this.githubStats.prsOpen(),
+      prsClosed: () => this.githubStats.prsClosed(),
+      ciStatus: () => this.githubStats.ciStatus(),
     };
-    this.footer = new ForgeryFooter(this.ui.theme, () => this.store.snapshot(), footerCtx);
+    this.footer = new ForgeryFooter(() => this.ui!.theme, () => this.store.snapshot(), footerCtx);
     // Mount: setFooter takes a factory `(tui, theme, footerData) => Component`.
     const footerRef = this.footer;
     this.ui.setFooter(

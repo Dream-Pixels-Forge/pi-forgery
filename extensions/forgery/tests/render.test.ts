@@ -35,7 +35,7 @@ test("ForgeryFooter: renders idle when no runs", () => {
     prsClosed: () => 5,
     ciStatus: () => "green",
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /main/);
@@ -68,7 +68,7 @@ test("ForgeryFooter: renders active run metrics", () => {
     prsClosed: () => null,
     ciStatus: () => null,
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /demo/);
@@ -94,7 +94,7 @@ test("ForgeryFooter: statusString() mirrors a compact line", () => {
     prsClosed: () => null,
     ciStatus: () => null,
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   assert.equal(footer.statusString(), "forgery · idle");
 
   store.start("run-2", { name: "busy" });
@@ -109,7 +109,7 @@ test("ForgeryWidget: shouldShow true when a run is active", () => {
     release: () => {},
     requestRender: () => {},
   };
-  const widget = new ForgeryWidget(stubTheme(), () => store.snapshot(), 8, { retainMs: 5000 }, interaction);
+  const widget = new ForgeryWidget(() => stubTheme(), () => store.snapshot(), 8, { retainMs: 5000 }, interaction);
   assert.equal(widget.shouldShow(store.snapshot()), false);
 
   store.start("run-3", { name: "now" });
@@ -137,7 +137,7 @@ test("ForgeryFooter: clamps a context percentage above 100", () => {
     prsClosed: () => null,
     ciStatus: () => null,
   };
-  const footer = new ForgeryFooter(stubTheme(), () => store.snapshot(), footerCtx);
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   // Pi does not clamp `percent`; the bar must not build a negative repeat count.
   assert.doesNotThrow(() => footer.render(200));
   assert.match(footer.render(200)[0], /125%/);

@@ -6,6 +6,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   animatedStatusGlyph,
+  box,
+  formatCallSummary,
   formatCost,
   formatDuration,
   formatPercent,
@@ -14,6 +16,7 @@ import {
   safeText,
   statusGlyph,
   truncate,
+  visibleLength,
 } from "../src/ui/format.js";
 
 test("formatTokens", () => {
@@ -88,4 +91,38 @@ test("statusGlyph", () => {
   assert.equal(statusGlyph("cancelled"), "■");
   assert.equal(statusGlyph("stopped"), "■");
   assert.equal(statusGlyph("weird"), "·");
+});
+
+test("box: wraps lines in a border", () => {
+  const lines = box(["hello", "world"], "test");
+  assert.ok(lines[0].startsWith("┌"), "top-left corner");
+  assert.ok(lines[lines.length - 1].startsWith("└"), "bottom-left corner");
+  assert.ok(lines.some((l) => l.includes("hello")), "contains first line");
+  assert.ok(lines.some((l) => l.includes("world")), "contains second line");
+});
+
+test("box: without title", () => {
+  const lines = box(["single line"]);
+  assert.ok(lines.length >= 3, "has top, body, bottom");
+  assert.ok(lines[1].includes("single line"), "body contains the line");
+});
+
+test("visibleLength: strips color tags", () => {
+  assert.equal(visibleLength("[accent]hello"), 5);
+  assert.equal(visibleLength("plain"), 5);
+  assert.equal(visibleLength(""), 0);
+});
+
+test("formatCallSummary: formats a call line", () => {
+  const out = formatCallSummary("pi.read", "completed", 1500, { tokens: 1234, cost: 0.42 });
+  assert.ok(out.includes("pi.read"), "includes ref");
+  assert.ok(out.includes("1s"), "includes duration");
+  assert.ok(out.includes("1.2k tok"), "includes tokens");
+  assert.ok(out.includes("$0.42"), "includes cost");
+});
+
+test("formatCallSummary: handles missing metrics", () => {
+  const out = formatCallSummary("agents.run", "running", undefined, undefined);
+  assert.ok(out.includes("agents.run"), "includes ref");
+  assert.ok(out.includes("◐"), "running glyph");
 });

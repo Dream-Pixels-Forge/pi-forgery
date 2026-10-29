@@ -64,6 +64,7 @@ export class ForgeryActivityStore {
       startedAt: now(),
       updatedAt: now(),
       cwd: cwd ?? "",
+      compacts: 0,
       metrics: { toolCalls: 0, tokens: 0, cost: 0 },
     };
     this.#runs.set(runId, run);
@@ -87,6 +88,7 @@ export class ForgeryActivityStore {
       startedAt: t,
       updatedAt: t,
       cwd: cwd ?? "",
+      compacts: 0,
       metrics: { toolCalls: 0, tokens: 0, cost: 0 },
     };
     this.#runs.set(runId, run);
@@ -119,6 +121,16 @@ export class ForgeryActivityStore {
 
   cancel(runId: string): void {
     this.finish(runId, false, "cancelled");
+  }
+
+  /** Record a compact (context reset) on the run. Returns the new compact count. */
+  compact(runId: string): number {
+    const run = this.#runs.get(runId);
+    if (!run) return 0;
+    run.compacts += 1;
+    run.updatedAt = now();
+    this.#notify();
+    return run.compacts;
   }
 
   // ── phases ─────────────────────────────────────────────────────────────

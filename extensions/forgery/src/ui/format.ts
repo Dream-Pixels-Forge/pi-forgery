@@ -130,3 +130,57 @@ export function colorStatus(theme: Theme, status: string): string {
 export function colorSafe(theme: Theme, text: string): string {
   return theme.fg("text", safeText(text));
 }
+
+// ── box drawing (for beautiful terminal output) ──────────────────────────
+
+const BOX = {
+  tl: "┌",
+  tr: "┐",
+  bl: "└",
+  br: "┘",
+  h: "─",
+  v: "│",
+};
+
+/** Wrap lines in a box-drawing border. Returns the boxed lines. */
+export function box(lines: string[], title?: string): string[] {
+  if (lines.length === 0) return [];
+  const pad = title ? 2 : 0;
+  const contentWidth = Math.max(...lines.map((l) => visibleLength(l)));
+  const width = contentWidth + pad + 4; // 2 for borders + 2 for inner padding
+
+  let top: string;
+  if (title) {
+    const titleLen = visibleLength(title);
+    const innerWidth = width - 4; // space between borders
+    const available = innerWidth - titleLen - 2; // 2 for spaces around title
+    const left = Math.max(0, Math.floor(available / 2));
+    const right = Math.max(0, available - left);
+    top = `${BOX.tl}${BOX.h.repeat(left)} ${title} ${BOX.h.repeat(right)}${BOX.tr}`;
+  } else {
+    top = BOX.tl + BOX.h.repeat(width - 2) + BOX.tr;
+  }
+  const body = lines.map((l) => BOX.v + " " + padRight(l, width - 4) + " " + BOX.v);
+  const bottom = BOX.bl + BOX.h.repeat(width - 2) + BOX.br;
+  return [top, ...body, bottom];
+}
+
+/** Pad a string to a target visible width. */
+function padRight(s: string, width: number): string {
+  const visible = visibleLength(s);
+  return s + " ".repeat(Math.max(0, width - visible));
+}
+
+/** Measure visible string length (strip ANSI-ish color tags from our Theme stub). */
+export function visibleLength(s: string): number {
+  return s.replace(/\[[a-z]+\]/g, "").replace(/\u001b\[[0-9;]*m/g, "").length;
+}
+
+/** Format a single call's summary line for display. */
+export function formatCallSummary(ref: string, status: string, durationMs: number | undefined, metrics?: { tokens?: number; cost?: number }): string {
+  const glyph = statusGlyph(status);
+  const dur = durationMs !== undefined ? ` ${formatDuration(durationMs)}` : "";
+  const tok = metrics?.tokens !== undefined ? ` ${formatTokens(metrics.tokens)} tok` : "";
+  const cst = metrics?.cost !== undefined && metrics.cost > 0 ? ` ${formatCost(metrics.cost)}` : "";
+  return `${glyph} ${ref}${dur}${tok}${cst}`;
+}

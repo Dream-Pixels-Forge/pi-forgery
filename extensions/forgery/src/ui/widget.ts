@@ -58,14 +58,14 @@ export class ForgeryWidget implements Component, Focusable {
   /** Frame counter used to animate the "working" spinner while a run is active. */
   #frame = 0;
 
-  private theme: Theme;
+  private theme: () => Theme;
   private snapshot: () => ForgerySnapshot;
   private maxRows: number;
   private retention?: ForgeryWidgetRetention;
   private interaction?: ForgeryWidgetInteraction;
 
   constructor(
-    theme: Theme,
+    theme: () => Theme,
     snapshot: () => ForgerySnapshot,
     maxRows = 8,
     retention?: ForgeryWidgetRetention,
@@ -127,7 +127,7 @@ export class ForgeryWidget implements Component, Focusable {
 
   render(width: number): string[] {
     const snap = this.snapshot();
-    const theme = this.theme;
+    const theme = this.theme();
     const active = snap.runs.find((r) => r.status === "running");
     const maxRows = Math.max(2, Math.min(this.maxRows, Math.floor((process.stdout.rows ?? 40) * WIDGET_TERMINAL_ROW_SHARE)));
 

@@ -148,3 +148,29 @@ test("store: the snapshot clock is live without a store mutation", async () => {
   const second = store.snapshot().now;
   assert.ok(second > first, `expected a live clock, got ${first} then ${second}`);
 });
+
+test("store: compact increments the run's compacts counter", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  const run = store.get("run-1")!;
+  assert.equal(run.compacts, 0);
+
+  const count1 = store.compact("run-1");
+  assert.equal(count1, 1);
+  assert.equal(store.get("run-1")!.compacts, 1);
+
+  const count2 = store.compact("run-1");
+  assert.equal(count2, 2);
+  assert.equal(store.get("run-1")!.compacts, 2);
+
+  // Compact on an unknown run returns 0 and does not throw.
+  assert.equal(store.compact("unknown"), 0);
+});
+
+test("store: compact bumps the revision", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+  const before = store.revision();
+  store.compact("run-1");
+  assert.ok(store.revision() > before);
+});

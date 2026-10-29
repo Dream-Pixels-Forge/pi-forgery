@@ -147,3 +147,87 @@ test("ForgeryUiController: refresh does not re-notify the store when nothing cha
   unsubscribe();
   controller.stop();
 });
+
+test("ForgeryUiController: auto-compacts active run when context usage is high", () => {
+  const store = new ForgeryActivityStore();
+  const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
+  const controller = new ForgeryUiController(store, runner, []);
+  const { ui } = stubUi();
+
+  let percent = 95;
+  const ctx = {
+    ui,
+    cwd: "/tmp/project",
+    model: { id: "acme/model-x" },
+    thinkingLevel: "low",
+    getContextUsage: () => ({ tokens: 9_500, contextWindow: 10_000, percent }),
+  } as unknown as ExtensionContext;
+
+  controller.start(ctx);
+
+  store.start("run-1", { name: "busy" });
+  const run = store.get("run-1")!;
+  assert.equal(run.compacts, 0);
+
+  controller.refresh();
+  const after = store.get("run-1")!;
+  assert.equal(after.compacts, 1, "expected one compact on high context usage");
+
+  // Immediate refresh again — cooldown should prevent a second compact.
+  controller.refresh();
+  const stillOne = store.get("run-1")!;
+  assert.equal(stillOne.compacts, 1, "cooldown should prevent re-compact");
+
+  controller.stop();
+});
+
+test("ForgeryUiController: does not auto-compact when context usage is low", () => {
+  const store = new ForgeryActivityStore();
+  const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
+  const controller = new ForgeryUiController(store, runner, []);
+  const { ui } = stubUi();
+
+  let percent = 30;
+  const ctx = {
+    ui,
+    cwd: "/tmp/project",
+    model: { id: "acme/model-x" },
+    thinkingLevel: "low",
+    getContextUsage: () => ({ tokens: 3_000, contextWindow: 10_000, percent }),
+  } as unknown as ExtensionContext;
+
+  controller.start(ctx);
+
+  store.start("run-1", { name: "idle" });
+  const run = store.get("run-1")!;
+  assert.equal(run.compacts, 0);
+
+  controller.refresh();
+  const after = store.get("run-1")!;
+  assert.equal(after.compacts, 0, "no compact expected at low context usage");
+
+  controller.stop();
+});
+
+test("ForgeryUiController: does not auto-compact when no active run", () => {
+  const store = new ForgeryActivityStore();
+  const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
+  const controller = new ForgeryUiController(store, runner, []);
+  const { ui } = stubUi();
+
+  const ctx = {
+    ui,
+    cwd: "/tmp/project",
+    model: { id: "acme/model-x" },
+    thinkingLevel: "low",
+    getContextUsage: () => ({ tokens: 9_500, contextWindow: 10_000, percent: 95 }),
+  } as unknown as ExtensionContext;
+
+  controller.start(ctx);
+
+  // No run started — compact should not throw.
+  assert.doesNotThrow(() => controller.refresh());
+  assert.equal(store.runs().length, 0);
+
+  controller.stop();
+});
