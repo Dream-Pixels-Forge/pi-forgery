@@ -1,77 +1,104 @@
-# Gate 5 — Honesty audit of UI-rendered values (pi-forgery)
+# Honesty Audit — Gate 5
 
-Audit of every string/number rendered by `widget.ts`, `footer.ts`, `dashboard.ts`, and `controller.ts`.
-Each value is traced to `ForgeryActivityStore.snapshot()` (store) or `ExtensionContext`/`ForgeryFooterContext` (ctx). Verdict: **honest** (real store/ctx field) or **fabricated** (hardcoded/random/computed-from-nothing telemetry).
+**Project:** pi-forgery  
+**Audited files:** `src/ui/widget.ts`, `src/ui/footer.ts`, `src/ui/dashboard.ts`, `src/ui/controller.ts`, `src/ui/format.ts`, `src/git/git.ts`, `src/git/githubStats.ts`  
+**Verdict:** ✅ All rendered values are honest — zero fabricated telemetry
 
-## Result
+## Method
 
-**Zero fabricated values found.** Every rendered value maps 1:1 to a store snapshot field or a ctx field. No code changes were required — audit only.
+Traced every rendered string/number in widget/footer/dashboard/controller back to its source: either `ForgeryActivityStore` (`store.snapshot()`), `ExtensionContext` (live `ctx`), or a CLI (`git` / `gh`). UI-only state (filter, runIndex, entityIndex, theme) is not telemetry and is excluded.
 
-## widget.ts — `ForgeryWidget` (above-editor activity widget)
+## Per-value source mapping
 
-| Rendered value | Source | Verdict |
+### `src/ui/footer.ts` — `ForgeryFooter.render()`
+
+| Rendered value | Source | Honest? |
 |---|---|---|
-| Idle line: `recent.name`, `recent.status`, `recent.error` | `snap.runs[0]` (store: `ForgeryRun.name` / `.status` / `.error`) | honest |
-| Idle line: `"forgery · idle"` | static label, no data claim | honest |
-| Header: `formatTokens(totals.tokens)` + `" tok"` | `snap.activeTotals.tokens` (store) | honest |
-| Header: `formatCost(totals.cost)` | `snap.activeTotals.cost` (store) | honest |
-| Header: `${totals.calls} calls` | `snap.activeTotals.calls` (store) | honest |
-| Header: `formatDuration(snap.now - active.startedAt)` | `snap.now` + `active.startedAt` (store) | honest |
-| Header glyph: `colorStatus(theme, "running")` | literal status for the active run found in `snap.runs` | honest |
-| Participant row: `agent.name`, `agent.status`, `agent.current` | `snap.agents[]` (store: `ForgeryAgentRecord`) | honest |
-| `shouldShow()` visibility: active run, `finishedAt` vs `retentionMs`, running agents | `snap.runs[]`, `snap.agents[]` (store) + real clock | honest |
-| Row count math (`active ? 2 : 1`, `maxRows` from `process.stdout.rows * WIDGET_TERMINAL_ROW_SHARE`) | invalidation + layout sizing, not presented as data | honest (layout) |
+| git branch | `footerCtx.gitBranch()` → `GitBranchReader.getBranch()` (git CLI) | ✅ |
+| context percent/bar | `footerCtx.contextUsage()` → `ctx.getContextUsage()` | ✅ |
+| tokens/max | `footerCtx.contextUsage()` → `ctx.getContextUsage()` | ✅ |
+| model name | `footerCtx.modelId()` → `ctx.model?.id` | ✅ |
+| effort | `footerCtx.effort()` → `ctx.thinkingLevel` | ✅ |
+| working dir | `footerCtx.cwd()` → `ctx.cwd` | ✅ |
+| compact count | `footerCtx.compactCount()` → `store.activeRunId()` + `store.get().compacts` | ✅ |
+| compact max | `footerCtx.compactMax()` → constant `5` | ✅ config threshold, not telemetry |
+| issues open/closed | `footerCtx.issuesOpen/Closed()` → `GitHubStatsReader` (gh CLI) | ✅ |
+| PRs open/closed | `footerCtx.prsOpen/Closed()` → `GitHubStatsReader` (gh CLI) | ✅ |
+| CI status | `footerCtx.ciStatus()` → `GitHubStatsReader.ciStatus()` (gh CLI) | ✅ |
+| active run name/status | `snap.runs.find()` (store) | ✅ |
+| active call/token/cost totals | `snap.activeTotals` (computed from store call metrics) | ✅ |
+| elapsed duration | `snap.now - active.startedAt` (live clock + store) | ✅ |
 
-## footer.ts — `ForgeryFooter` (status-line footer)
+### `src/ui/footer.ts` — `ForgeryFooter.statusString()`
 
-| Rendered value | Source | Verdict |
+| Rendered value | Source | Honest? |
 |---|---|---|
-| Git branch segment (`⎇ <branch>` / `no-repo`) | `footerCtx.gitBranch()` (ctx) | honest |
-| Context segment (`ctx <pct>% · <tokens> tok` / `ctx —`) | `footerCtx.contextPercent()`, `footerCtx.contextTokens()` (ctx) | honest |
-| Model segment | `footerCtx.modelId()` (ctx) | honest |
-| Active run: name, calls, tokens, cost, duration | `snap.activeTotals` + `active.startedAt`, `snap.now` (store) | honest |
-| Recent run fallback: name/status/error | `snap.runs[0]` (store) | honest |
-| `statusString()` mirror into `setStatus("forgery", …)` | same store fields as render | honest |
-| `"forgery · idle"` | static label | honest |
+| active/recent run name + status | `snap.runs` (store) | ✅ |
+| call count | `snap.activeTotals.calls` (store) | ✅ |
+| tokens | `snap.activeTotals.tokens` (store) | ✅ |
+| cost | `snap.activeTotals.cost` (store) | ✅ |
+| elapsed duration | `snap.now - active.startedAt` (live clock + store) | ✅ |
 
-## dashboard.ts — `ForgeryDashboard` (`/forgery` modal)
+### `src/ui/widget.ts` — `ForgeryWidget.render()`
 
-| Rendered value | Source | Verdict |
+| Rendered value | Source | Honest? |
 |---|---|---|
-| Activity header / help hint / `"no runs yet"` | static labels | honest |
-| Phase panels: name/status/current/total/duration | `focus.phases[]` (store: `ForgeryPhase`) + `snap.now` | honest |
-| Call list: ref/label/preview/error/status, `calls (n)` count | `focus.calls[]` (store: `ForgeryCall`) | honest |
-| Agent list: name/status/current/cost/duration, `agents (n)` count | `snap.agents[]` (store: `ForgeryAgentRecord`, `usage.cost`) + `snap.now` | honest |
-| Filter label `filter: <n>` | component state (UI filter, not telemetry) | honest |
-| Settings view: host calls list, pi binary, concurrency | `opts.hostCalls` (registry via controller) + `opts.agentConfig` (runner config) | honest |
-| Host-calls/agents counts in empty-state line | `opts.hostCalls.length`, `snap.agents.length` | honest |
+| active run name | `snap.runs.find()` (store) | ✅ |
+| call/token/cost totals | `snap.activeTotals` (store) | ✅ |
+| elapsed duration | `snap.now - active.startedAt` (live clock + store) | ✅ |
+| agent name/status/current | `snap.agents` (store) | ✅ |
+| spinner frame | `this.#frame` (UI animation counter, not telemetry) | ✅ UI state |
 
-## controller.ts — `ForgeryUiController`
+### `src/ui/controller.ts` — `ForgeryUiController.#statusString()`
 
-| Rendered value | Source | Verdict |
+| Rendered value | Source | Honest? |
 |---|---|---|
-| Built-in footer status string via `#statusString()` | `snap.runs`, `snap.activeTotals`, `snap.now` (store) | honest |
-| Dashboard opts: `hostCalls`, `agentConfig.maxConcurrent`/`piBinary` | `this.hostCalls` (registry) + `this.runner` config | honest |
-| Footer ctx wiring (`gitBranch`, `contextPercent`, `contextTokens`, `modelId`) | `ExtensionContext` methods (ctx) | honest |
+| active run name | `snap.runs.find()` (store) | ✅ |
+| call count | `snap.activeTotals.calls` (store) | ✅ |
+| tokens | `snap.activeTotals.tokens` (store) | ✅ |
+| cost | `snap.activeTotals.cost` (store) | ✅ |
+| elapsed duration | `snap.now - active.startedAt` (live clock + store) | ✅ |
+
+### `src/ui/dashboard.ts` — `ForgeryDashboard.render()`
+
+| Rendered value | Source | Honest? |
+|---|---|---|
+| snapshot / runs / phases / calls | `this.opts.snapshot()` → `store.snapshot()` | ✅ |
+| host calls list/count | `this.opts.hostCalls` (registry) | ✅ |
+| agent runner config | `this.opts.agentConfig` (config) | ✅ |
+| filter / runIndex / entityIndex | UI component state | ✅ UI state, not telemetry |
+| phase name/status/total/current/times | `focus.phases` (store) | ✅ |
+| call ref/status/label/preview/error | `focus.calls` (store) | ✅ |
+| agent status/name/current/cost/duration | `snap.agents` (store) | ✅ |
+
+### `src/git/git.ts` — `GitBranchReader`
+
+| Value | Source | Honest? |
+|---|---|---|
+| branch name | `git rev-parse --abbrev-ref HEAD` (git CLI) | ✅ returns `null` on failure, never fabricates |
+
+### `src/git/githubStats.ts` — `GitHubStatsReader`
+
+| Value | Source | Honest? |
+|---|---|---|
+| issues open/closed | `gh issue list --state ... --json number --jq 'length'` | ✅ returns `null` on failure |
+| PRs open/closed | `gh pr list --state ... --json number --jq 'length'` | ✅ returns `null` on failure |
+| CI status | `gh run list --limit 1 --json status --jq '.[0].status'` | ✅ returns `null` on failure |
+
+### `src/ui/format.ts`
+
+All functions are pure presenters — they take input values and format them. No data generation. ✅
+
+## Fabricated values found
+
+**None.** Every rendered value traces to `ForgeryActivityStore`, `ExtensionContext`, `git` CLI, `gh` CLI, or agent runner config. No `Math.random()`, no hardcoded metrics, no fake telemetry.
 
 ## Notes
 
-- `widget.ts` line 33 (`WIDGET_TERMINAL_ROW_SHARE = 0.5`) and the `process.stdout.rows ?? 40` term are layout sizing (half the terminal), not rendered telemetry. Verdict: honest (layout constant, never shown as data).
-- Dashboard agent row shows `formatDuration(snap.now - agent.startedAt)` when `agent.finishedAt` is set — a real computed duration from store fields, not a fabricated number. Left unchanged (audit-only goal; no UI changes beyond fabrication fixes).
-- Spec's fake-number grep (`Math.random`, hardcoded `0.`/`100.` telemetry, `fixed`) over `extensions/forgery/src/ui/` returned only the layout constant above, a formatting threshold in `format.ts` (`cost < 0.01`), and retention-window clock math on real store timestamps — none are rendered values.
+- `compactMax: () => 5` is a configuration threshold (maximum compacts before handoff recommended), not a measured telemetry value. It is documented as a default and never presented as observed data.
+- `snapshot.now` is a live clock (`Date.now()`) used only for elapsed-duration calculations, not as a data value.
+- UI state (filter, runIndex, entityIndex, spinner frame, theme) is component state, not telemetry — excluded from audit scope.
 
-## Confirmation: `ForgerySnapshot` ↔ rendered text
+## Conclusion
 
-All `ForgerySnapshot` fields read by the UI map 1:1 to rendered text:
-
-| `ForgerySnapshot` field | Used by | Rendered as |
-|---|---|---|
-| `now` | widget header duration, footer duration, dashboard phase/agent durations | `formatDuration(snap.now - startedAt)` |
-| `runs[]` | widget idle/header, footer active+recent, dashboard activity focus | run name/status/error/duration |
-| `activeTotals.tokens` | widget header, footer | `formatTokens(...)` + `" tok"` |
-| `activeTotals.cost` | widget header, footer | `formatCost(...)` |
-| `activeTotals.calls` | widget header, footer | `"<n> calls"` |
-| `activeTotals.startedAt` | widget/footer duration base | `formatDuration(now - startedAt)` |
-| `agents[]` | widget participant rows, dashboard agent list | name/status/current/cost/duration |
-
-No computed or fake numbers appear in any rendered line.
+Gate 5 (honesty) is satisfied. No changes required to UI components.
