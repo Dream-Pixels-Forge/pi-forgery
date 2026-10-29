@@ -21,7 +21,13 @@ import type { ForgerySnapshot } from "../activity/types";
 import { ForgeryDashboard } from "./dashboard";
 import { ForgeryFooter, type ForgeryFooterContext } from "./footer";
 import { ForgeryWidget, type ForgeryWidgetInteraction } from "./widget";
-import { formatCost, formatDuration, formatTokens, statusGlyph } from "./format";
+import {
+  animatedStatusGlyph,
+  formatCost,
+  formatDuration,
+  formatTokens,
+  statusGlyph,
+} from "./format";
 import { GitBranchReader } from "../git";
 
 const REFRESH_MS = 100;
@@ -55,6 +61,8 @@ export class ForgeryUiController {
   private unsubscribeStore?: () => void;
   private unsubscribeAgents?: () => void;
   private started = false;
+  /** Frame counter used to animate the "working" spinner in the status line. */
+  #frame = 0;
   private hostCalls: string[];
   private gitBranchReader: GitBranchReader;
 
@@ -317,6 +325,7 @@ export class ForgeryUiController {
   }
 
   #statusString(snap: ForgerySnapshot): string {
+    this.#frame += 1;
     const active = snap.runs.find((r) => r.status === "running");
     if (!active) {
       const recent = snap.runs[0];
@@ -325,7 +334,7 @@ export class ForgeryUiController {
     }
     const totals = snap.activeTotals;
     return [
-      `◐ ${active.name}`,
+      `${animatedStatusGlyph("running", this.#frame)} ${active.name}`,
       totals ? `${totals.calls} calls` : undefined,
       totals?.tokens ? formatTokens(totals.tokens) : undefined,
       totals?.cost ? formatCost(totals.cost) : undefined,

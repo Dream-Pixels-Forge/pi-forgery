@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  animatedStatusGlyph,
   formatCost,
   formatDuration,
   formatPercent,
@@ -22,7 +23,20 @@ test("formatTokens", () => {
   assert.equal(formatTokens(1234), "1.2k");
   assert.equal(formatTokens(12345), "12.3k");
   assert.equal(formatTokens(123000), "123k");
+  assert.equal(formatTokens(1_000_000), "1M");
+  assert.equal(formatTokens(1_500_000), "1.5M");
   assert.equal(formatTokens(null), "—");
+});
+
+test("animatedStatusGlyph", () => {
+  // Running cycles through spinner frames based on the frame index.
+  const frames = new Set();
+  for (let i = 0; i < 20; i++) frames.add(animatedStatusGlyph("running", i));
+  assert.ok(frames.size > 1, "spinner should cycle through multiple frames");
+  // Non-running statuses keep their static glyphs.
+  assert.equal(animatedStatusGlyph("completed", 0), statusGlyph("completed"));
+  assert.equal(animatedStatusGlyph("failed", 0), statusGlyph("failed"));
+  assert.equal(animatedStatusGlyph("idle", 0), statusGlyph("idle"));
 });
 
 test("formatCost", () => {

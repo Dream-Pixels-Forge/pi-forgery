@@ -6,13 +6,23 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 
-/** 1234 → "1.2k", 123000 → "123k", <1000 → raw digits. */
+/** 1234 → "1.2k", 123000 → "123k", 1000000 → "1M", <1000 → raw digits. */
 export function formatTokens(count: number | null | undefined): string {
   if (count === null || count === undefined) return "—";
   if (count < 1000) return String(count);
   const k = count / 1000;
-  if (k < 100) return `${k.toFixed(1).replace(/\.0$/, "")}k`;
-  return `${Math.round(k)}k`;
+  if (k < 1000) return `${k.toFixed(1).replace(/\.0$/, "")}k`;
+  const m = count / 1_000_000;
+  return `${m.toFixed(1).replace(/\.0$/, "")}M`;
+}
+
+/** Braille spinner frames cycled to animate a "working" run/agent. */
+export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/** Animated status glyph: running → next spinner frame, else the static glyph. */
+export function animatedStatusGlyph(status: string, frameIndex: number): string {
+  if (status === "running") return SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
+  return statusGlyph(status);
 }
 
 /** Format a dollar amount. Undefined/0 → "—". */
