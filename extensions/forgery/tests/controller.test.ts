@@ -231,3 +231,38 @@ test("ForgeryUiController: does not auto-compact when no active run", () => {
 
   controller.stop();
 });
+
+test("ForgeryUiController: idle refresh does not read host context usage", () => {
+  const store = new ForgeryActivityStore();
+  const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
+  const controller = new ForgeryUiController(store, runner, []);
+  const { ui } = stubUi();
+
+  let contextUsageCalls = 0;
+  const ctx = {
+    ui,
+    cwd: "/tmp/project",
+    model: { id: "acme/model-x" },
+    thinkingLevel: "low",
+    getContextUsage: () => {
+      contextUsageCalls += 1;
+      return { tokens: 1_000, contextWindow: 10_000, percent: 10 };
+    },
+  } as unknown as ExtensionContext;
+
+  controller.start(ctx);
+
+  // No active run: nothing to compact, so the host context getter must not be read
+  // during session start / idle (avoid a potentially blocking host call on launch).
+  controller.refresh();
+  controller.refresh();
+  assert.equal(contextUsageCalls, 0, "getContextUsage must not be read when idle");
+
+  // With an active run the getter is read once to decide whether to compact.
+  store.start("run-1", { name: "busy" });
+  contextUsageCalls = 0;
+  controller.refresh();
+  assert.equal(contextUsageCalls, 1, "getContextUsage read once when an active run exists");
+
+  controller.stop();
+});

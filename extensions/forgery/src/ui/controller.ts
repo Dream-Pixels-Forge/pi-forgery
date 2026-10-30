@@ -158,11 +158,13 @@ export class ForgeryUiController {
   #maybeCompact(snap: ForgerySnapshot): void {
     const now = Date.now();
     if (now - this.#lastCompactAt < COMPACT_COOLDOWN_MS) return;
+    // Nothing to compact without an active run — avoid reading live host
+    // context (a potentially blocking getter) during session start / idle.
+    const activeId = this.store.activeRunId();
+    if (!activeId) return;
     const usage = this.#read((c) => c.getContextUsage());
     const pct = usage?.percent ?? 0;
     if (pct < COMPACT_THRESHOLD_PCT) return;
-    const activeId = this.store.activeRunId();
-    if (!activeId) return;
     this.store.compact(activeId);
     this.#lastCompactAt = now;
   }

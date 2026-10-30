@@ -164,7 +164,7 @@ export class ForgeryFooter implements Component {
     const ctxSeg = pct !== null
       ? theme.fg(
           "muted",
-          `ctx ${this.#progressBar(pct, 6)} ${formatPercent(pct)}${
+          `ctx ${this.#progressBar(pct, 6)}${
             tokens !== null ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}` : ""
           }`,
         )

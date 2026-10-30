@@ -142,3 +142,27 @@ test("ForgeryFooter: clamps a context percentage above 100", () => {
   assert.doesNotThrow(() => footer.render(200));
   assert.match(footer.render(200)[0], /125%/);
 });
+
+test("ForgeryFooter: renders a single context percentage, not duplicated", () => {
+  const store = new ForgeryActivityStore();
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => ({ tokens: 21_300, contextWindow: 32_000, percent: 42 }),
+    modelId: () => undefined,
+    effort: () => null,
+    cwd: () => null,
+    compactCount: () => null,
+    compactMax: () => null,
+    issuesOpen: () => null,
+    issuesClosed: () => null,
+    prsOpen: () => null,
+    prsClosed: () => null,
+    ciStatus: () => null,
+  };
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
+  const line = footer.render(200)[0];
+  // #progressBar already appends formatPercent(pct), so ctxSeg must not add it again.
+  const pctOccurrences = line.match(/42%/g);
+  assert.equal(pctOccurrences?.length, 1, "context percentage should render exactly once");
+  assert.match(line, /ctx \[███░░░\] 42%/);
+});
