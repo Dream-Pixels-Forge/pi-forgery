@@ -1,39 +1,34 @@
-import { execSync } from 'node:child_process';
+import { AsyncCache, runGitAsync } from "./git/asyncCache";
 
 /**
- * Reads the current git branch with caching and throttling.
- * Updates at most every throttleInterval milliseconds.
- *
+ * Reads the current git branch with SWR (Stale-While-Revalidate) async cache.
+ * Returns cached value immediately, triggers background refresh when stale.
  * Never throws — returns null when not in a git repository or when git
  * is unavailable, so callers never need to handle git errors.
  */
 export class GitBranchReader {
-  private branch: string | null = null;
-  private lastUpdated = 0;
-  private readonly throttleInterval = 2000; // ms
+  private readonly cache: AsyncCache<string | null>;
 
-  /** Returns the cached branch if fresh, otherwise updates and returns the new value.
-   *  Always returns null (never throws) when not in a git repository. */
+  constructor(requestRender?: () => void) {
+    this.cache = new AsyncCache<string | null>(2000, requestRender);
+  }
+
+  /**
+   * Current branch, or null when unavailable.
+   * Returns cached value immediately; refreshes in background if stale.
+   */
   getBranch(): string | null {
-    const now = Date.now();
-    if (now - this.lastUpdated < this.throttleInterval && this.branch !== null) {
-      return this.branch;
-    }
-    try {
-      // Run git from the current working directory of the process.
-      // Wrapped in try/catch so a missing git binary or non-git directory
-      // never throws — we simply report no branch.
-      const output = execSync('git rev-parse --abbrev-ref HEAD', {
-        encoding: 'utf8',
-        maxBuffer: 1024,
-        // Suppress stderr so git's "not a git repository" error doesn't leak
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim();
-      this.branch = output.length > 0 ? output : null;
-    } catch (_) {
-      this.branch = null;
-    }
-    this.lastUpdated = now;
-    return this.branch;
+    return this.cache.get("branch", async () => {
+      try {
+        return await runGitAsync(["rev-parse", "--abbrev-ref", "HEAD"]);
+      } catch {
+        return null;
+      }
+    });
+  }
+
+  /** Force a refresh on next getBranch(). */
+  invalidate(): void {
+    this.cache.invalidate("branch");
   }
 }

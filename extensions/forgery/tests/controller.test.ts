@@ -28,8 +28,10 @@ interface FooterComponent {
 
 function stubUi() {
   const state: { footerFactory?: (...args: unknown[]) => FooterComponent } = {};
+  const tui = { requestRender: () => {} };
   const ui = {
     theme: stubTheme(),
+    tui,
     setFooter: (factory: unknown) => {
       state.footerFactory = factory as typeof state.footerFactory;
     },
@@ -40,7 +42,12 @@ function stubUi() {
   return { ui, state };
 }
 
-test("ForgeryUiController: footer reads host state live, not frozen at mount", () => {
+/** Wait for microtasks to flush (async mounting). */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => queueMicrotask(resolve));
+}
+
+test("ForgeryUiController: footer reads host state live, not frozen at mount", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -63,11 +70,13 @@ test("ForgeryUiController: footer reads host state live, not frozen at mount", (
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
   const footer = state.footerFactory!(ui, stubTheme(), {});
 
   // At mount the footer shows the then-current values.
+  // Context usage reader primes asynchronously, so first render shows "ctx —".
   const atMount = footer.render(200)[0];
-  assert.match(atMount, /10%/);
+  assert.match(atMount, /ctx —/);
   assert.match(atMount, /model-x/);
   assert.match(atMount, /lw/);
 
@@ -84,7 +93,7 @@ test("ForgeryUiController: footer reads host state live, not frozen at mount", (
   controller.stop();
 });
 
-test("ForgeryUiController: a stale extension context degrades instead of throwing", () => {
+test("ForgeryUiController: a stale extension context degrades instead of throwing", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -109,6 +118,7 @@ test("ForgeryUiController: a stale extension context degrades instead of throwin
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
   const footer = state.footerFactory!(ui, stubTheme(), {});
 
   assert.doesNotThrow(() => footer.render(200));
@@ -116,7 +126,7 @@ test("ForgeryUiController: a stale extension context degrades instead of throwin
   controller.stop();
 });
 
-test("ForgeryUiController: refresh does not re-notify the store when nothing changed", () => {
+test("ForgeryUiController: refresh does not re-notify the store when nothing changed", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -136,6 +146,7 @@ test("ForgeryUiController: refresh does not re-notify the store when nothing cha
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
   const baseline = notifications;
 
   controller.refresh();
@@ -148,7 +159,7 @@ test("ForgeryUiController: refresh does not re-notify the store when nothing cha
   controller.stop();
 });
 
-test("ForgeryUiController: auto-compacts active run when context usage is high", () => {
+test("ForgeryUiController: auto-compacts active run when context usage is high", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -164,6 +175,7 @@ test("ForgeryUiController: auto-compacts active run when context usage is high",
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
 
   store.start("run-1", { name: "busy" });
   const run = store.get("run-1")!;
@@ -181,7 +193,7 @@ test("ForgeryUiController: auto-compacts active run when context usage is high",
   controller.stop();
 });
 
-test("ForgeryUiController: does not auto-compact when context usage is low", () => {
+test("ForgeryUiController: does not auto-compact when context usage is low", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -197,6 +209,7 @@ test("ForgeryUiController: does not auto-compact when context usage is low", () 
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
 
   store.start("run-1", { name: "idle" });
   const run = store.get("run-1")!;
@@ -209,7 +222,7 @@ test("ForgeryUiController: does not auto-compact when context usage is low", () 
   controller.stop();
 });
 
-test("ForgeryUiController: does not auto-compact when no active run", () => {
+test("ForgeryUiController: does not auto-compact when no active run", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -224,6 +237,7 @@ test("ForgeryUiController: does not auto-compact when no active run", () => {
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
 
   // No run started — compact should not throw.
   assert.doesNotThrow(() => controller.refresh());
@@ -232,7 +246,7 @@ test("ForgeryUiController: does not auto-compact when no active run", () => {
   controller.stop();
 });
 
-test("ForgeryUiController: idle refresh does not read host context usage", () => {
+test("ForgeryUiController: idle refresh does not read host context usage", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
   const controller = new ForgeryUiController(store, runner, []);
@@ -251,6 +265,7 @@ test("ForgeryUiController: idle refresh does not read host context usage", () =>
   } as unknown as ExtensionContext;
 
   controller.start(ctx);
+  await flush(); // wait for async mount
 
   // No active run: nothing to compact, so the host context getter must not be read
   // during session start / idle (avoid a potentially blocking host call on launch).

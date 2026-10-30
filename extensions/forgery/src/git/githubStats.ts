@@ -2,16 +2,21 @@
  * pi-forgery — GitHub stats reader.
  *
  * Reads open/closed issue and PR counts plus CI status via the `gh` CLI.
+ * Uses SWR (Stale-While-Revalidate) async cache — returns cached value
+ * immediately, triggers background refresh when stale.
  * Never throws — returns `null` when `gh` is unavailable, not in a repo,
- * or any command fails. Results are throttled (2 s cache) so the footer
- * can read them on every render without shelling out each frame.
+ * or any command fails.
  *
- * `exec` is injectable (defaults to `node:child_process` `execSync`) so
+ * `exec` is injectable (defaults to `node:child_process` `execFileAsync`) so
  * the reader can be unit-tested without shelling out.
  */
 
-import type { ExecSyncOptions } from "node:child_process";
-import { execSync as defaultExecSync } from "node:child_process";
+import type { ExecFileOptions } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { AsyncCache, runGhAsync } from "./asyncCache";
+
+const execFileAsync = promisify(execFile);
 
 type GhStatus = "pending" | "failed" | "green" | "nit" | null;
 
@@ -39,76 +44,81 @@ function mapCiStatus(status: string): GhStatus {
   }
 }
 
-/** Throttled `gh` CLI reader for issues / PRs / CI. */
-export class GitHubStatsReader {
-  private exec: (cmd: string, opts?: ExecSyncOptions) => string;
-  private cache: { issuesOpen: number | null; issuesClosed: number | null; prsOpen: number | null; prsClosed: number | null; ciStatus: GhStatus } | null = null;
-  private lastUpdated = 0;
-  private readonly throttleInterval = 2000; // ms
+/** Result shape for GitHub stats. */
+interface GitHubStats {
+  issuesOpen: number | null;
+  issuesClosed: number | null;
+  prsOpen: number | null;
+  prsClosed: number | null;
+  ciStatus: GhStatus;
+}
 
-  constructor(exec?: (cmd: string, opts?: ExecSyncOptions) => string) {
-    this.exec = exec ?? (defaultExecSync as (cmd: string, opts?: ExecSyncOptions) => string);
+/** Throttled `gh` CLI reader for issues / PRs / CI with SWR cache. */
+export class GitHubStatsReader {
+  private exec: (cmd: string, opts?: ExecFileOptions) => Promise<string>;
+  private readonly cache: AsyncCache<GitHubStats>;
+
+  constructor(
+    exec?: (cmd: string, opts?: ExecFileOptions) => Promise<string>,
+    requestRender?: () => void,
+  ) {
+    this.exec = exec ?? defaultExecAsync;
+    this.cache = new AsyncCache<GitHubStats>(2000, requestRender);
   }
 
   /** Open issue count, or null when unavailable. */
   issuesOpen(): number | null {
-    return this.#refresh().issuesOpen;
+    return this.getStats().issuesOpen;
   }
 
   /** Closed issue count, or null when unavailable. */
   issuesClosed(): number | null {
-    return this.#refresh().issuesClosed;
+    return this.getStats().issuesClosed;
   }
 
   /** Open PR count, or null when unavailable. */
   prsOpen(): number | null {
-    return this.#refresh().prsOpen;
+    return this.getStats().prsOpen;
   }
 
   /** Closed PR count, or null when unavailable. */
   prsClosed(): number | null {
-    return this.#refresh().prsClosed;
+    return this.getStats().prsClosed;
   }
 
   /** CI status: "pending" | "failed" | "green" | null. */
   ciStatus(): GhStatus {
-    return this.#refresh().ciStatus;
+    return this.getStats().ciStatus;
   }
 
-  #refresh(): {
-    issuesOpen: number | null;
-    issuesClosed: number | null;
-    prsOpen: number | null;
-    prsClosed: number | null;
-    ciStatus: GhStatus;
-  } {
-    const now = Date.now();
-    if (
-      now - this.lastUpdated < this.throttleInterval &&
-      this.cache !== null
-    ) {
-      return this.cache;
-    }
-
-    const result = {
-      issuesOpen: this.#ghCount("issue", "open"),
-      issuesClosed: this.#ghCount("issue", "closed"),
-      prsOpen: this.#ghCount("pr", "open"),
-      prsClosed: this.#ghCount("pr", "closed"),
-      ciStatus: this.#ghCiStatus(),
+  /** Get all stats at once (uses shared cache). */
+  private getStats(): GitHubStats {
+    const stats = this.cache.get("stats", async () => {
+      const result: GitHubStats = {
+        issuesOpen: await this.#ghCount("issue", "open"),
+        issuesClosed: await this.#ghCount("issue", "closed"),
+        prsOpen: await this.#ghCount("pr", "open"),
+        prsClosed: await this.#ghCount("pr", "closed"),
+        ciStatus: await this.#ghCiStatus(),
+      };
+      return result;
+    });
+    // Return default empty stats if cache is empty (first call before refresh)
+    return stats ?? {
+      issuesOpen: null,
+      issuesClosed: null,
+      prsOpen: null,
+      prsClosed: null,
+      ciStatus: null,
     };
-
-    this.cache = result;
-    this.lastUpdated = now;
-    return result;
   }
 
   /** `gh <type> list --state <state> --json number --jq 'length'` → count. */
-  #ghCount(type: "issue" | "pr", state: "open" | "closed"): number | null {
+  async #ghCount(type: "issue" | "pr", state: "open" | "closed"): Promise<number | null> {
     try {
-      const output = this.exec(
+      const output = await this.exec(
         `gh ${type} list --state ${state} --json number --jq 'length'`,
-        { encoding: "utf8", maxBuffer: 1024, stdio: ["pipe", "pipe", "pipe"] },
+        { encoding: "utf8", maxBuffer: 1024, windowsHide: true },
       );
       const n = Number(output.trim());
       return Number.isFinite(n) ? n : null;
@@ -118,15 +128,33 @@ export class GitHubStatsReader {
   }
 
   /** `gh run list --limit 1 --json status --jq '.[0].status'` → mapped status. */
-  #ghCiStatus(): GhStatus {
+  async #ghCiStatus(): Promise<GhStatus> {
     try {
-      const output = this.exec(
+      const output = await this.exec(
         "gh run list --limit 1 --json status --jq '.[0].status'",
-        { encoding: "utf8", maxBuffer: 1024, stdio: ["pipe", "pipe", "pipe"] },
+        { encoding: "utf8", maxBuffer: 1024, windowsHide: true },
       );
       return mapCiStatus(output.trim());
     } catch {
       return null;
     }
   }
+
+  /** Force a refresh on next call. */
+  invalidate(): void {
+    this.cache.invalidate("stats");
+  }
+}
+
+/** Default async exec using execFileAsync. */
+async function defaultExecAsync(cmd: string, opts?: ExecFileOptions): Promise<string> {
+  // Parse command into program + args for execFileAsync
+  const [program, ...args] = cmd.split(" ");
+  const { stdout } = await execFileAsync(program, args, {
+    encoding: "utf8",
+    maxBuffer: 4096,
+    windowsHide: true,
+    ...opts,
+  });
+  return stdout as string;
 }

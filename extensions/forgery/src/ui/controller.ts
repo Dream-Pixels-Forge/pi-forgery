@@ -30,6 +30,7 @@ import {
 } from "./format";
 import { GitBranchReader } from "../git";
 import { GitHubStatsReader } from "../git/githubStats";
+import { ContextUsageReader } from "./contextUsageReader";
 
 const REFRESH_MS = 100;
 /** How often the TUI is asked for a frame so live readouts keep ticking. */
@@ -71,6 +72,11 @@ export class ForgeryUiController {
   private hostCalls: string[];
   private gitBranchReader: GitBranchReader;
   private githubStats: GitHubStatsReader;
+  private contextUsageReader: ContextUsageReader;
+  /** Request a TUI re-render when async cache refreshes. */
+  #requestRender = (): void => {
+    this.#tui()?.requestRender();
+  };
   /** Timestamp of the last auto-compaction, to enforce the cooldown. */
   #lastCompactAt = 0;
 
@@ -83,8 +89,9 @@ export class ForgeryUiController {
     this.store = store;
     this.runner = runner;
     this.hostCalls = hostCalls;
-    this.gitBranchReader = new GitBranchReader();
-    this.githubStats = new GitHubStatsReader();
+    this.gitBranchReader = new GitBranchReader(this.#requestRender);
+    this.githubStats = new GitHubStatsReader(undefined, this.#requestRender);
+    this.contextUsageReader = new ContextUsageReader(() => this.ctx);
     this.options = {
       maxRows: options.maxRows ?? 8,
       retainMs: options.retainMs ?? 30_000,
@@ -105,13 +112,19 @@ export class ForgeryUiController {
     this.unsubscribeStore = this.store.subscribe(() => this.scheduleRefresh());
     this.unsubscribeAgents = this.runner.subscribe(() => this.scheduleRefresh());
 
-    this.#mountWidget(ctx);
-    this.#mountFooter(ctx);
-    this.refresh();
-    // pi-tui renders on demand, so ask for a frame once a second — otherwise
-    // elapsed time and context usage freeze whenever nothing else changes.
-    this.heartbeat = setInterval(() => this.#tick(), HEARTBEAT_MS);
-    this.heartbeat.unref?.();
+    // Defer widget/footer mounting to the next microtask so pi can finish
+    // its initial render cycle. This prevents blocking execSync calls
+    // (git branch, gh CLI) from freezing the UI on launch.
+    queueMicrotask(() => {
+      if (!this.started || !this.ui) return;
+      this.#mountWidget(ctx);
+      this.#mountFooter(ctx);
+      this.refresh();
+      // pi-tui renders on demand, so ask for a frame once a second — otherwise
+      // elapsed time and context usage freeze whenever nothing else changes.
+      this.heartbeat = setInterval(() => this.#tick(), HEARTBEAT_MS);
+      this.heartbeat.unref?.();
+    });
   }
 
   /** Stop the UI: unsubscribe + unmount. Idempotent. */
@@ -317,8 +330,10 @@ export class ForgeryUiController {
     if (!this.options.footer || !this.ui) return;
     const footerCtx: ForgeryFooterContext = {
       gitBranch: () => this.gitBranchReader.getBranch(),
-      // Read live on every render — Pi recomputes context usage per call.
-      contextUsage: () => this.#read((c) => c.getContextUsage()) ?? null,
+      // Context usage is read via a throttled reader to avoid blocking the
+      // UI render loop on every frame. The reader caches the host's
+      // getContextUsage() for throttleInterval ms.
+      contextUsage: () => this.contextUsageReader.get(),
       modelId: () => this.#read((c) => c.model?.id),
       effort: () => this.#read((c) => c.thinkingLevel) ?? null,
       cwd: () => this.#read((c) => c.cwd) ?? null,
