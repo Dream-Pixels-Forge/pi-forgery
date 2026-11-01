@@ -376,6 +376,18 @@ export const ActivitySubgoalsSchema = Type.Object({
   goalId: Type.Optional(Type.String({ description: "Filter subgoals by goal/run id." })),
 });
 
+// ── Activity export / import ──────────────────────────────────────────────
+
+export const ActivityExportSchema = Type.Object({
+  path: Type.Optional(Type.String({ description: "File path to write the snapshot JSON to. Defaults to <cwd>/.pi/forgery/activity-<runId>.json" })),
+  runId: Type.Optional(Type.String({ description: "Run id to export. Defaults to the active/recent run." })),
+});
+
+export const ActivityImportSchema = Type.Object({
+  path: Type.String({ description: "File path to read the snapshot JSON from." }),
+  runId: Type.Optional(Type.String({ description: "Optional run id to re-assign imported runs to." })),
+});
+
 // ── Cost Management ────────────────────────────────────────────────────────
 
 export const CostEstimateSchema = Type.Object({

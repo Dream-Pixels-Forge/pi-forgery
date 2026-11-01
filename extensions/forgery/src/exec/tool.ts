@@ -16,7 +16,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve as pathResolve } from "node:path";
+import { isAbsolute, resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { Type } from "typebox";
 import {
   defineTool,
@@ -39,6 +39,8 @@ import {
 } from "./runtime";
 import {
   ActivityAgentsSchema,
+  ActivityExportSchema,
+  ActivityImportSchema,
   ActivityRunsSchema,
   ActivitySnapshotSchema,
   ActivitySubgoalsSchema,
@@ -1054,6 +1056,56 @@ registry.register({
       return {
         value: subs,
         preview: `${subs.length} subgoal(s) for ${goalId.slice(0, 8)}`,
+      };
+    },
+  });
+
+// ── Activity export / import ─────────────────────────────────────────
+
+  registry.register({
+    ref: "activity.export",
+    schema: ActivityExportSchema,
+    kind: "tool",
+    execute: async (args, hctx) => {
+      const runId = args.runId ? String(args.runId) : hctx.runId;
+      const snap = activity.get(runId) ? activity.snapshot() : null;
+      if (!snap) return { error: `activity.export: no snapshot for run ${runId}` };
+      const dir = args.path
+        ? pathResolve(hctx.cwd, pathDirname(String(args.path)))
+        : pathResolve(hctx.cwd, ".pi", "forgery");
+      mkdirSync(dir, { recursive: true });
+      const filePath = args.path
+        ? pathResolve(hctx.cwd, String(args.path))
+        : pathResolve(dir, `activity-${runId.slice(0, 8)}.json`);
+      writeFileSync(filePath, JSON.stringify(snap, null, 2), "utf8");
+      return {
+        value: { path: filePath, runs: snap.runs.length, agents: snap.agents.length },
+        preview: `exported ${snap.runs.length} run(s), ${snap.agents.length} agent(s) → ${filePath}`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "activity.import",
+    schema: ActivityImportSchema,
+    kind: "tool",
+    execute: async (args) => {
+      const filePath = pathResolve(process.cwd(), String(args.path));
+      let json: string;
+      try {
+        json = readFileSync(filePath, "utf8");
+      } catch (e) {
+        return { error: `activity.import: cannot read ${filePath}: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      try {
+        activity.importSnapshot(json);
+      } catch (e) {
+        return { error: `activity.import: invalid snapshot: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      const snap = activity.snapshot();
+      return {
+        value: { runs: snap.runs.length, agents: snap.agents.length },
+        preview: `imported ${snap.runs.length} run(s), ${snap.agents.length} agent(s)`,
       };
     },
   });

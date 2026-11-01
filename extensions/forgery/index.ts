@@ -19,6 +19,8 @@ import {
   type TerminalCapabilities,
 } from "@earendil-works/pi-tui";
 import { randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { ForgeryActivityStore } from "./src/activity/store";
 import { AgentRunner } from "./src/agents/runner";
 import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
@@ -61,7 +63,7 @@ export default function forgery(pi: ExtensionAPI): void {
   pi.registerCommand("forgery", {
     description: "pi-forgery: dashboard, status, agents, log, stop",
     getArgumentCompletions: (prefix: string): { value: string; label: string; description?: string }[] | null => {
-      const subs = ["dashboard", "status", "agents", "log", "stop", "settings", "image-protocol"];
+      const subs = ["dashboard", "status", "agents", "log", "stop", "settings", "image-protocol", "export", "import"];
       const list: { value: string; label: string; description?: string }[] = subs
         .filter((s) => s.startsWith(prefix.toLowerCase()))
         .map((s) => ({ value: s, label: s, description: subDescriptions[s] }));
@@ -228,6 +230,55 @@ export default function forgery(pi: ExtensionAPI): void {
           }
           break;
         }
+        case "export": {
+          const filePath = rest[0];
+          const runId = store.activeRunId();
+          if (!runId) {
+            ctx.ui.notify("forgery: no active run to export", "warning");
+            break;
+          }
+          try {
+            const snap = store.exportSnapshot();
+            const target = filePath
+              ? pathResolve(ctx.cwd, filePath)
+              : pathResolve(ctx.cwd, ".pi", "forgery", `activity-${runId.slice(0, 8)}.json`);
+            mkdirSync(pathDirname(target), { recursive: true });
+            writeFileSync(target, snap, "utf8");
+            ctx.ui.notify(
+              `forgery: exported ${snap.length} bytes → ${target}`,
+              "info",
+            );
+          } catch (e) {
+            ctx.ui.notify(
+              `forgery: export failed: ${e instanceof Error ? e.message : String(e)}`,
+              "error",
+            );
+          }
+          break;
+        }
+        case "import": {
+          const filePath = rest[0];
+          if (!filePath) {
+            ctx.ui.notify("usage: /forgery import <path>", "info");
+            break;
+          }
+          try {
+            const target = pathResolve(ctx.cwd, filePath);
+            const json = readFileSync(target, "utf8");
+            store.importSnapshot(json);
+            const snap = store.snapshot();
+            ctx.ui.notify(
+              `forgery: imported ${snap.runs.length} run(s), ${snap.agents.length} agent(s)`,
+              "info",
+            );
+          } catch (e) {
+            ctx.ui.notify(
+              `forgery: import failed: ${e instanceof Error ? e.message : String(e)}`,
+              "error",
+            );
+          }
+          break;
+        }
         case "workflow": {
           const [action, ...workflowArgs] = rest;
           const engine = createEngine(store, runner, ctx.cwd);
@@ -375,6 +426,8 @@ const subDescriptions: Record<string, string> = {
   stop: "stop one agent (stop <agent-id>)",
   settings: "show the read-only host-call + agent runner config",
   workflow: "EGM-style Goldfish review (run|status|list|stop|resume)",
+  export: "export the activity snapshot to a JSON file (export [path])",
+  import: "import an activity snapshot from a JSON file (import <path>)",
 };
 
 async function status(ctx: ExtensionContext): Promise<void> {

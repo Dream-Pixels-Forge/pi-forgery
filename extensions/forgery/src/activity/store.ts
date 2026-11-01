@@ -10,6 +10,8 @@ import type {
   ForgeryRunDisplay,
   ForgerySnapshot,
   ForgeryActivityMetrics,
+  ForgerySubgoal,
+  ForgerySubgoalInput,
 } from "./types";
 
 /** Bounded collection sizes so a long session cannot grow the store unboundedly. */
@@ -17,6 +19,7 @@ const MAX_RUNS = 24;
 const MAX_CALLS_PER_RUN = 500;
 const MAX_ITEMS_PER_RUN = 500;
 const MAX_EVENTS_PER_RUN = 200;
+const MAX_SUBGOALS_PER_RUN = 200;
 
 const now = () => Date.now();
 const genId = () => randomUUID();
@@ -35,6 +38,8 @@ export class ForgeryActivityStore {
   #runs: Map<string, ForgeryRun> = new Map();
   #order: string[] = [];
   #agents: Map<string, ForgeryAgentRecord> = new Map();
+  #subgoals: Map<string, ForgerySubgoal> = new Map();
+  #subgoalOrder: string[] = [];
   #revision = 0;
   #listeners: Set<() => void> = new Set();
   #frozenView: ForgerySnapshot[] = [];
@@ -61,6 +66,7 @@ export class ForgeryActivityStore {
       calls: [],
       items: [],
       events: [],
+      subgoals: [],
       startedAt: now(),
       updatedAt: now(),
       cwd: cwd ?? "",
@@ -85,6 +91,7 @@ export class ForgeryActivityStore {
       calls: [],
       items: [],
       events: [],
+      subgoals: [],
       startedAt: t,
       updatedAt: t,
       cwd: cwd ?? "",
@@ -121,6 +128,162 @@ export class ForgeryActivityStore {
 
   cancel(runId: string): void {
     this.finish(runId, false, "cancelled");
+  }
+
+  // ── subgoals ───────────────────────────────────────────────────────────
+
+  /**
+   * Create or update a subgoal.
+   *
+   * Deduped by `(goalId, name)`: calling with the same goal and name returns
+   * the existing subgoal with its mutable fields patched, rather than creating
+   * a duplicate. This is intentional for idempotency but means two subgoals
+   * under the same goal cannot share a name. `shortcut: name-based dedup`,
+   * `when to upgrade: switch to id-only create if distinct same-named subgoals
+   * are needed`.
+   */
+  subgoal(input: ForgerySubgoalInput): ForgerySubgoal {
+    const run = this.#runs.get(input.goalId);
+    if (!run) throw new Error(`unknown goal/run ${input.goalId}`);
+    const t = now();
+
+    // Look up an existing subgoal by name within this goal.
+    let existing: ForgerySubgoal | undefined;
+    for (const sid of this.#subgoalOrder) {
+      const s = this.#subgoals.get(sid);
+      if (s && s.goalId === input.goalId && s.name === input.name) {
+        existing = s;
+        break;
+      }
+    }
+
+    if (!existing) {
+      const subgoal: ForgerySubgoal = {
+        id: randomUUID(),
+        goalId: input.goalId,
+        parentSubgoalId: input.parentSubgoalId,
+        name: input.name,
+        description: input.description,
+        acceptanceCriteria: input.acceptanceCriteria,
+        status: input.status ?? "pending",
+        current: input.current,
+        total: input.total,
+        completed: input.completed,
+        output: input.output,
+        error: input.error,
+        usage: input.usage,
+        startedAt: input.status === "running" ? t : undefined,
+        updatedAt: t,
+      };
+      this.#subgoals.set(subgoal.id, subgoal);
+      this.#subgoalOrder.push(subgoal.id);
+      run.subgoals.push(subgoal);
+      if (run.subgoals.length > MAX_SUBGOALS_PER_RUN) {
+        run.subgoals.splice(0, run.subgoals.length - MAX_SUBGOALS_PER_RUN);
+      }
+      run.updatedAt = t;
+      this.#notify();
+      return subgoal;
+    }
+
+    // Patch mutable fields on the existing subgoal.
+    if (input.status !== undefined) existing.status = input.status;
+    if (input.current !== undefined) existing.current = input.current;
+    if (input.total !== undefined) existing.total = input.total;
+    if (input.completed !== undefined) existing.completed = input.completed;
+    if (input.output !== undefined) existing.output = input.output;
+    if (input.error !== undefined) existing.error = input.error;
+    if (input.usage !== undefined) existing.usage = input.usage;
+    if (input.description !== undefined) existing.description = input.description;
+    if (input.acceptanceCriteria !== undefined)
+      existing.acceptanceCriteria = input.acceptanceCriteria;
+    if (input.status === "running" && !existing.startedAt)
+      existing.startedAt = t;
+    existing.updatedAt = t;
+    run.updatedAt = t;
+    this.#notify();
+    return existing;
+  }
+
+  /** Update a subgoal by id. Returns the subgoal or undefined if not found. */
+  updateSubgoal(
+    subgoalId: string,
+    patch: Partial<
+      Pick<
+        ForgerySubgoal,
+        | "status"
+        | "current"
+        | "total"
+        | "completed"
+        | "output"
+        | "error"
+        | "usage"
+        | "description"
+        | "acceptanceCriteria"
+      >
+    >,
+  ): ForgerySubgoal | undefined {
+    const subgoal = this.#subgoals.get(subgoalId);
+    if (!subgoal) return undefined;
+    const t = now();
+    if (patch.status !== undefined) subgoal.status = patch.status;
+    if (patch.current !== undefined) subgoal.current = patch.current;
+    if (patch.total !== undefined) subgoal.total = patch.total;
+    if (patch.completed !== undefined) subgoal.completed = patch.completed;
+    if (patch.output !== undefined) subgoal.output = patch.output;
+    if (patch.error !== undefined) subgoal.error = patch.error;
+    if (patch.usage !== undefined) subgoal.usage = patch.usage;
+    if (patch.description !== undefined) subgoal.description = patch.description;
+    if (patch.acceptanceCriteria !== undefined)
+      subgoal.acceptanceCriteria = patch.acceptanceCriteria;
+    if (patch.status === "running" && !subgoal.startedAt)
+      subgoal.startedAt = t;
+    subgoal.updatedAt = t;
+    const run = this.#runs.get(subgoal.goalId);
+    if (run) run.updatedAt = t;
+    this.#notify();
+    return subgoal;
+  }
+
+  /** Mark a subgoal completed or failed. Returns the subgoal or undefined. */
+  finishSubgoal(
+    subgoalId: string,
+    success: boolean,
+    error?: string,
+  ): ForgerySubgoal | undefined {
+    const subgoal = this.#subgoals.get(subgoalId);
+    if (!subgoal) return undefined;
+    const t = now();
+    subgoal.status = success ? "completed" : "failed";
+    subgoal.finishedAt = t;
+    subgoal.updatedAt = t;
+    if (error) subgoal.error = error;
+    const run = this.#runs.get(subgoal.goalId);
+    if (run) {
+      run.updatedAt = t;
+      // Cascade: if all subgoals are terminal, consider the run's phase state.
+      const allTerminal = run.subgoals.every(
+        (s) => s.status === "completed" || s.status === "failed" || s.status === "blocked",
+      );
+      if (allTerminal && run.subgoals.length > 0) {
+        // no-op marker — run-level completion is owned by finish()
+      }
+    }
+    this.#notify();
+    return subgoal;
+  }
+
+  /** Read a subgoal by id. */
+  subgoalById(subgoalId: string): ForgerySubgoal | undefined {
+    return this.#subgoals.get(subgoalId);
+  }
+
+  /** Read all subgoals for a goal/run, most-recent-first. */
+  subgoalsForGoal(goalId: string): ForgerySubgoal[] {
+    return this.#subgoalOrder
+      .reverse()
+      .map((sid) => this.#subgoals.get(sid))
+      .filter((s): s is ForgerySubgoal => s !== undefined && s.goalId === goalId);
   }
 
   /** Record a compact (context reset) on the run. Returns the new compact count. */
@@ -405,7 +568,7 @@ export class ForgeryActivityStore {
     return snapshot;
   }
 
-  /** Returns the current snapshot plus a totals block over active runs. */
+  /** Returns the current snapshot plus totals blocks over active runs. */
   snapshot(): ForgerySnapshot {
     const base = this.createSnapshot();
     const active = base.runs.filter((r) => r.status === "running");
@@ -414,19 +577,63 @@ export class ForgeryActivityStore {
       let cost = 0;
       let calls = 0;
       let startedAt: number | undefined;
+      let subgoalCompleted = 0;
+      let subgoalTotal = 0;
       for (const r of active) {
         for (const c of r.calls) {
           calls += 1;
           if (c.metrics?.tokens) tokens += c.metrics.tokens;
           if (c.metrics?.cost) cost += c.metrics.cost;
         }
+        for (const s of r.subgoals) {
+          subgoalTotal += 1;
+          if (s.status === "completed") subgoalCompleted += 1;
+        }
         if (startedAt === undefined || r.startedAt < startedAt) startedAt = r.startedAt;
       }
       base.activeTotals = { tokens, cost, calls, startedAt };
+      base.subgoalTotals = { completed: subgoalCompleted, total: subgoalTotal };
     } else {
       base.activeTotals = { calls: 0 };
+      base.subgoalTotals = { completed: 0, total: 0 };
     }
     return base;
+  }
+
+  // ── export / import (session persistence) ──────────────────────────────
+
+  /** Serialize the current activity snapshot to JSON. */
+  exportSnapshot(): string {
+    return JSON.stringify(this.snapshot(), null, 2);
+  }
+
+  /**
+   * Replace the store's contents with data from a previously exported
+   * snapshot. Bumps the revision so subscribers are notified.
+   * Throws on malformed input — callers should catch.
+   */
+  importSnapshot(json: string): void {
+    const snap = JSON.parse(json) as ForgerySnapshot;
+    this.#runs.clear();
+    this.#order = [];
+    this.#agents.clear();
+    this.#subgoals.clear();
+    this.#subgoalOrder = [];
+    this.#frozenView = [];
+    this.#frozenRevision = -1;
+
+    for (const run of snap.runs) {
+      this.#runs.set(run.id, run);
+      this.#order.push(run.id);
+      for (const subgoal of run.subgoals) {
+        this.#subgoals.set(subgoal.id, subgoal);
+        this.#subgoalOrder.push(subgoal.id);
+      }
+    }
+    for (const agent of snap.agents) {
+      this.#agents.set(agent.id, agent);
+    }
+    this.#notify();
   }
 
   // ── subscription ───────────────────────────────────────────────────────
@@ -442,6 +649,8 @@ export class ForgeryActivityStore {
     this.#runs.clear();
     this.#order = [];
     this.#agents.clear();
+    this.#subgoals.clear();
+    this.#subgoalOrder = [];
     this.#frozenView = [];
     this.#frozenRevision = -1;
     this.#notify();
