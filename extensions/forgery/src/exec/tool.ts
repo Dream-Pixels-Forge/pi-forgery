@@ -1248,6 +1248,9 @@ const PARAMS = Type.Object({
     Type.Number({ description: "Program-level deadline in milliseconds.", minimum: 1, maximum: 3_600_000 }),
   ),
   runId: Type.Optional(Type.String({ description: "Run id to reuse for a resumed/continued run. Generated when omitted." })),
+  /** When true, validates every host call's args against its schema and reports
+   *  the planned call sequence without executing any host call. */
+  dryRun: Type.Optional(Type.Boolean({ description: "Validate calls without executing (dry-run / pre-flight check)." })),
 });
 
 export function createForgeryExecTool(
@@ -1295,7 +1298,7 @@ export function createForgeryExecTool(
 
       ctx.ui.setStatus("forgery", "forgery_exec: running…");
 
-      const outcome = await runForgery(params.code, registry, activity, hctx, mergedSignal);
+      const outcome = await runForgery(params.code, registry, activity, hctx, mergedSignal, Boolean(params.dryRun));
 
       // Cleanup.
       signal?.removeEventListener("abort", hostAbort);

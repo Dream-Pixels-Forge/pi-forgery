@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import {
   HostCallRegistry,
   buildHostProxy,
+  runForgery,
   runProgram,
   validateArgs,
   type HostExecCtx,
@@ -154,4 +155,92 @@ test("buildHostProxy: unknown member throws", async () => {
   assert.ok(typeof pi.read === "function");
   // Accessing an unregistered host call should not produce a callable.
   assert.equal(pi.bash, undefined);
+});
+
+// ── Dry-run mode tests ──────────────────────────────────────────────────
+
+test("runForgery: dry-run validates calls and returns planned sequence", async () => {
+  let executeCalls = 0;
+  const reg = new HostCallRegistry();
+  reg.register({
+    ref: "pi.read",
+    schema: { type: "object", properties: {}, required: ["path"] } as any,
+    kind: "tool",
+    execute: async () => {
+      executeCalls += 1;
+      return { value: "file-content" };
+    },
+  });
+  const store = new ForgeryActivityStore();
+  const ctx: HostExecCtx = { runId: "run-1", activity: store, cwd: "." };
+  const code = `
+    const a = await pi.read({ path: "a.txt" });
+    const b = await pi.read({ path: "b.txt" });
+    return { a, b };
+  `;
+  const result = await runForgery(code, reg, store, ctx, new AbortController().signal, true);
+  assert.equal(result.ok, true);
+  assert.equal(executeCalls, 0, "host calls must not execute during dry-run");
+  assert.ok(Array.isArray((result.value as any).planned));
+  assert.equal((result.value as any).planned.length, 2);
+  assert.equal((result.value as any).planned[0].ref, "pi.read");
+  assert.equal((result.value as any).planned[0].args.path, "a.txt");
+  assert.equal((result.value as any).planned[1].ref, "pi.read");
+  assert.equal((result.value as any).planned[1].args.path, "b.txt");
+});
+
+test("runForgery: dry-run rejects invalid args with validation error", async () => {
+  const reg = new HostCallRegistry();
+  reg.register({
+    ref: "pi.read",
+    schema: { type: "object", properties: {}, required: ["path"] } as any,
+    kind: "tool",
+    execute: async () => ({ value: "x" }),
+  });
+  const store = new ForgeryActivityStore();
+  const ctx: HostExecCtx = { runId: "run-1", activity: store, cwd: "." };
+  // Missing required "path" field.
+  const code = `await pi.read({}); return "ok";`;
+  const result = await runForgery(code, reg, store, ctx, new AbortController().signal, true);
+  assert.equal(result.ok, false);
+  assert.match(result.error ?? "", /path/);
+});
+
+test("runForgery: dry-run does not mutate the activity store", async () => {
+  const reg = new HostCallRegistry();
+  reg.register({
+    ref: "pi.read",
+    schema: { type: "object", properties: {}, required: ["path"] } as any,
+    kind: "tool",
+    execute: async () => ({ value: "x" }),
+  });
+  const store = new ForgeryActivityStore();
+  const ctx: HostExecCtx = { runId: "run-1", activity: store, cwd: "." };
+  const code = `await pi.read({ path: "a.txt" }); return "ok";`;
+  const result = await runForgery(code, reg, store, ctx, new AbortController().signal, true);
+  assert.equal(result.ok, true);
+  // Store should have no runs recorded.
+  assert.equal(store.runs().length, 0);
+});
+
+test("runForgery: default (non-dry-run) behavior unchanged", async () => {
+  let executeCalls = 0;
+  const reg = new HostCallRegistry();
+  reg.register({
+    ref: "pi.read",
+    schema: { type: "object", properties: {}, required: ["path"] } as any,
+    kind: "tool",
+    execute: async () => {
+      executeCalls += 1;
+      return { value: "file-content" };
+    },
+  });
+  const store = new ForgeryActivityStore();
+  const ctx: HostExecCtx = { runId: "run-1", activity: store, cwd: "." };
+  const code = `const t = await pi.read({ path: "a.txt" }); return { t };`;
+  const result = await runForgery(code, reg, store, ctx, new AbortController().signal);
+  assert.equal(result.ok, true);
+  assert.equal(executeCalls, 1, "host calls must execute normally when not dry-run");
+  assert.equal(store.runs().length, 1, "store run should be recorded");
+  assert.deepEqual(result.value, { t: "file-content" });
 });

@@ -45,6 +45,14 @@ export interface HostExecCtx {
   activity: ForgeryActivityStore;
   /** Working directory of the active Pi session. */
   cwd: string;
+  /** When true, host calls validate args but do not execute — used for dry-run mode. */
+  dryRun?: boolean;
+}
+
+/** A single planned call recorded during dry-run. */
+export interface PlannedCall {
+  ref: string;
+  args: Record<string, unknown>;
 }
 
 export interface HostExecResult {
@@ -121,6 +129,8 @@ export interface ProgramResult {
   ok: boolean;
   value?: unknown;
   error?: string;
+  /** Populated when dry-run is true: the validated-but-unexecuted call sequence. */
+  planned?: PlannedCall[];
 }
 
 /**
@@ -137,7 +147,10 @@ export function buildHostProxy(
   pi: Record<string, (...a: unknown[]) => Promise<unknown>>;
   agents: Record<string, (...a: unknown[]) => Promise<unknown>>;
   activity: Record<string, (...a: unknown[]) => Promise<unknown>>;
+  planned: PlannedCall[];
 } {
+  const planned: PlannedCall[] = [];
+  const dryRun = Boolean(ctx.dryRun);
   const make = (prefix: string): Record<string, (...a: unknown[]) => Promise<unknown>> => {
     const target: Record<string, (...a: unknown[]) => Promise<unknown>> = {};
     let callCounter = 0;
@@ -154,16 +167,22 @@ export function buildHostProxy(
         if (!ok) {
           throw new Error(`validation failed for ${ref}: ${error}`);
         }
+        const validatedArgs = vargs as Record<string, unknown>;
+        // Dry-run: record the planned call but do not execute it.
+        if (dryRun) {
+          planned.push({ ref, args: validatedArgs });
+          return { preview: "dry-run" };
+        }
         const callId = `c${++callCounter}`;
         let bridged = false;
         try {
-          ctx.activity.beginCall(ctx.runId, callId, ref, vargs as Record<string, unknown>);
+          ctx.activity.beginCall(ctx.runId, callId, ref, validatedArgs);
           bridged = true;
         } catch {
           /* run not started; skip bridging */
         }
         try {
-          const result = await spec.execute(vargs as Record<string, unknown>, ctx, signal);
+          const result = await spec.execute(validatedArgs, ctx, signal);
           if (bridged) {
             ctx.activity.finishCall(ctx.runId, callId, {
               success: result.error === undefined,
@@ -197,6 +216,7 @@ export function buildHostProxy(
     pi: make("pi"),
     agents: make("agents"),
     activity: make("activity"),
+    planned,
   };
 }
 
@@ -240,7 +260,7 @@ export async function runProgram(
     }
   }
 
-  const { pi, agents, activity } = buildHostProxy(registry, ctx, signal);
+  const { pi, agents, activity, planned } = buildHostProxy(registry, ctx, signal);
 
   // Wrap the body in an async function so top-level `await` works and the
   // user can use `return` in their program body. `new Function` produces:
@@ -263,6 +283,10 @@ export async function runProgram(
     const value = await factory(pi, agents, activity, hostHandle);
     if (signal.aborted) {
       return { ok: false, error: "aborted" };
+    }
+    // Dry-run: return the planned call sequence instead of the program's value.
+    if (ctx.dryRun) {
+      return { ok: true, value: { planned }, planned };
     }
     return { ok: true, value };
   } catch (e) {
@@ -294,7 +318,20 @@ export async function runForgery(
   store: ForgeryActivityStore,
   ctx: HostExecCtx,
   signal: AbortSignal,
+  dryRun = false,
 ): Promise<ForgeryExecOutcome> {
+  // Dry-run: validate all host call args without executing or touching the store.
+  if (dryRun) {
+    const dryCtx: HostExecCtx = { ...ctx, dryRun: true };
+    const result = await runProgram(code, registry, dryCtx, signal);
+    if (result.ok) {
+      const planned = (result.value as { planned?: PlannedCall[] })?.planned ?? [];
+      const preview = JSON.stringify(planned, null, 2).slice(0, 400);
+      return { ok: true, value: { planned }, preview };
+    }
+    return { ok: false, error: result.error ?? "unknown", preview: safeText(result.error ?? "") };
+  }
+
   store.start(ctx.runId, undefined, undefined, ctx.cwd);
   const result = await runProgram(code, registry, ctx, signal);
   if (result.ok) {
