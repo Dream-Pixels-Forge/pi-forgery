@@ -143,6 +143,93 @@ test("ForgeryFooter: clamps a context percentage above 100", () => {
   assert.match(footer.render(200)[0], /125%/);
 });
 
+test("ForgeryFooter: renders subgoal progress when subgoals exist", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.subgoal({ goalId: "run-1", name: "write tests", status: "completed", total: 3, completed: 3 });
+  store.subgoal({ goalId: "run-1", name: "write code", status: "running", total: 5, completed: 2 });
+
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => null,
+    modelId: () => undefined,
+    effort: () => null,
+    cwd: () => null,
+    compactCount: () => null,
+    compactMax: () => null,
+    issuesOpen: () => null,
+    issuesClosed: () => null,
+    prsOpen: () => null,
+    prsClosed: () => null,
+    ciStatus: () => null,
+  };
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
+  const lines = footer.render(200);
+  // subgoal segment: completed subgoal count / total subgoal count across active runs
+  assert.match(lines[0], /subgoals 1\/2/);
+});
+
+test("ForgeryFooter: no subgoal segment when no subgoals", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => null,
+    modelId: () => undefined,
+    effort: () => null,
+    cwd: () => null,
+    compactCount: () => null,
+    compactMax: () => null,
+    issuesOpen: () => null,
+    issuesClosed: () => null,
+    prsOpen: () => null,
+    prsClosed: () => null,
+    ciStatus: () => null,
+  };
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
+  const lines = footer.render(200);
+  assert.match(lines[0], /demo/);
+  assert.ok(!lines[0].includes("subgoals"));
+});
+
+test("ForgeryWidget: renders subgoal rows for active run", () => {
+  const store = new ForgeryActivityStore();
+  const interaction: ForgeryWidgetInteraction = {
+    activity: () => [],
+    release: () => {},
+    requestRender: () => {},
+  };
+  const widget = new ForgeryWidget(() => stubTheme(), () => store.snapshot(), 8, { retainMs: 5000 }, interaction);
+
+  store.start("run-1", { name: "demo" });
+  store.subgoal({ goalId: "run-1", name: "write tests", status: "completed", total: 3, completed: 3 });
+  store.subgoal({ goalId: "run-1", name: "write code", status: "running", total: 5, completed: 2 });
+
+  const lines = widget.render(120);
+  const body = lines.join("\n");
+  assert.match(body, /write tests/);
+  assert.match(body, /write code/);
+  assert.match(body, /3\/3/);
+  assert.match(body, /2\/5/);
+});
+
+test("ForgeryWidget: no subgoal rows when run has none", () => {
+  const store = new ForgeryActivityStore();
+  const interaction: ForgeryWidgetInteraction = {
+    activity: () => [],
+    release: () => {},
+    requestRender: () => {},
+  };
+  const widget = new ForgeryWidget(() => stubTheme(), () => store.snapshot(), 8, { retainMs: 5000 }, interaction);
+
+  store.start("run-1", { name: "demo" });
+  const lines = widget.render(120);
+  const body = lines.join("\n");
+  assert.ok(!body.includes("write tests"));
+  assert.ok(!body.includes("write code"));
+});
+
 test("ForgeryFooter: renders a single context percentage, not duplicated", () => {
   const store = new ForgeryActivityStore();
   const footerCtx: ForgeryFooterContext = {
