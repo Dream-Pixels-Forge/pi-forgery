@@ -115,8 +115,65 @@ export const AgentsRun = Type.Object({
 
 export const AgentsList = Type.Object({});
 
+// ── Enhanced one-shot agent run (with templates, validation, self-correction) ─────
+
+export const AgentsRunEnhanced = Type.Object({
+  task: Type.String({
+    description: "The natural-language task the enhanced agent should accomplish.",
+  }),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the agent subprocess." })),
+  model: Type.Optional(Type.String({ description: "Optional model id for the agent subprocess." })),
+  timeoutMs: Type.Optional(Type.Number({ description: "Soft timeout in milliseconds." })),
+  systemPrompt: Type.Optional(Type.String({ description: "Additional system prompt for the agent session." })),
+  name: Type.Optional(Type.String({ description: "Agent name for display." })),
+  
+  // Enhancements
+  template: Type.Optional(Type.String({
+    description: "Agent specialization template.",
+    enum: ["coder", "researcher", "reviewer", "planner", "tester", "documenter", "debugger", "architect", "general"],
+  })),
+  outputSchema: Type.Optional(Type.Object({
+    type: Type.Literal("object"),
+    properties: Type.Record(Type.String(), Type.Object({
+      type: Type.String(),
+      description: Type.Optional(Type.String()),
+      enum: Type.Optional(Type.Array(Type.String())),
+    })),
+    required: Type.Optional(Type.Array(Type.String())),
+    additionalProperties: Type.Optional(Type.Boolean()),
+  }, { description: "JSON schema for structured output validation." })),
+  maxRetries: Type.Optional(Type.Number({ description: "Self-correction retries on validation failure. Default: 2.", minimum: 0, maximum: 5 })),
+  qualityGates: Type.Optional(Type.Array(Type.String(), { description: "Names of built-in quality gates to enable: nonEmpty, noHallucination, specificity" })),
+  injectContext: Type.Optional(Type.Boolean({ description: "Inject parent run context. Default: true." })),
+  allowedTools: Type.Optional(Type.Array(Type.String(), { description: "Tools the agent can call. Default: template defaults." })),
+  budget: Type.Optional(Type.Object({
+    maxTokens: Type.Optional(Type.Number()),
+    maxCost: Type.Optional(Type.Number()),
+  }, { description: "Per-agent token/cost budget." })),
+  parentRunId: Type.Optional(Type.String({ description: "Parent forgery_exec run id for context injection." })),
+});
+
 export const AgentsStop = Type.Object({
   id: Type.String({ description: "Agent id returned by agents.run." }),
+});
+
+export const AgentsRunEnhancedResult = Type.Object({
+  id: Type.String(),
+  status: Type.String({ enum: ["completed", "failed", "stopped", "timed_out", "unavailable"] }),
+  text: Type.String(),
+  value: Type.Optional(Type.Unknown()),
+  error: Type.Optional(Type.String()),
+  usage: Type.Optional(Type.Object({
+    input: Type.Optional(Type.Number()),
+    output: Type.Optional(Type.Number()),
+    cost: Type.Optional(Type.Number()),
+  })),
+  startedAt: Type.Number(),
+  finishedAt: Type.Number(),
+  attempts: Type.Number(),
+  validationErrors: Type.Optional(Type.Array(Type.String())),
+  qualityGateFailures: Type.Optional(Type.Array(Type.String())),
+  structuredOutput: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 
 // ── Workflow (EGM-style Goldfish review) host calls ─────────────────────
@@ -182,4 +239,171 @@ export const WorkflowResolve = Type.Object({
     }),
     { description: "Findings with resolution decisions" },
   ),
+});
+
+// ── Production Development Loop (research-plan-test-code-review-learn) ──────
+
+export const DevLoopRun = Type.Object({
+  task: Type.String({ description: "The development task to execute through the full loop." }),
+  maxLoopIterations: Type.Optional(Type.Number({ description: "Maximum full loop iterations (default: 3).", minimum: 1, maximum: 10 })),
+  maxPhaseRetries: Type.Optional(Type.Number({ description: "Max retries per phase (default: 2).", minimum: 0, maximum: 5 })),
+  enableLearning: Type.Optional(Type.Boolean({ description: "Enable learning/improvement phase (default: true)." })),
+  qualityThreshold: Type.Optional(Type.Number({ description: "Quality threshold to stop early 0-1 (default: 0.8).", minimum: 0, maximum: 1 })),
+  phaseOrder: Type.Optional(Type.Array(Type.String({ enum: ["researcher", "planner", "tester", "coder", "reviewer", "security", "design", "git", "sniper", "teammate", "debugger", "architect"] }), { description: "Custom phase order." })),
+  globalContext: Type.Optional(Type.String({ description: "Additional context for all phases." })),
+  budget: Type.Optional(Type.Object({
+    maxTokens: Type.Optional(Type.Number()),
+    maxCost: Type.Optional(Type.Number()),
+    maxTimeMs: Type.Optional(Type.Number()),
+  }, { description: "Budget for entire loop." })),
+});
+
+export const DevLoopPhaseResultSchema = Type.Object({
+  phase: Type.String(),
+  result: Type.Object({
+    id: Type.String(),
+    status: Type.String(),
+    text: Type.String(),
+    attempts: Type.Number(),
+    structuredOutput: Type.Optional(Type.Unknown()),
+  }),
+  passed: Type.Boolean(),
+  feedback: Type.Optional(Type.String()),
+  metrics: Type.Object({
+    durationMs: Type.Number(),
+    attempts: Type.Number(),
+    tokensUsed: Type.Number(),
+  }),
+});
+
+export const DevLoopResultSchema = Type.Object({
+  success: Type.Boolean(),
+  iterations: Type.Number(),
+  phases: Type.Array(DevLoopPhaseResultSchema),
+  finalOutput: Type.Optional(Type.Object({
+    id: Type.String(),
+    status: Type.String(),
+    text: Type.String(),
+    structuredOutput: Type.Optional(Type.Unknown()),
+  })),
+  learningSummary: Type.Optional(Type.String()),
+  totalMetrics: Type.Object({
+    durationMs: Type.Number(),
+    totalTokens: Type.Number(),
+    totalCost: Type.Number(),
+    phasesCompleted: Type.Number(),
+  }),
+  artifacts: Type.Object({
+    research: Type.Optional(Type.Unknown()),
+    plan: Type.Optional(Type.Unknown()),
+    tests: Type.Optional(Type.Unknown()),
+    code: Type.Optional(Type.Unknown()),
+    review: Type.Optional(Type.Unknown()),
+    learning: Type.Optional(Type.Unknown()),
+  }),
+});
+
+// ── Subgoals ───────────────────────────────────────────────────────────────
+
+export const SubgoalsCreateSchema = Type.Object({
+  goalId: Type.String({ description: "Parent forgery_exec run/goal id." }),
+  parentSubgoalId: Type.Optional(Type.String({ description: "Optional parent subgoal id for nesting." })),
+  name: Type.String({ description: "Subgoal name." }),
+  description: Type.Optional(Type.String({ description: "Subgoal description." })),
+  acceptanceCriteria: Type.Optional(
+    Type.Array(Type.String(), { description: "Acceptance criteria — all must be met for completion." }),
+  ),
+  status: Type.Optional(
+    Type.String({ enum: ["pending", "running", "completed", "failed", "blocked"], description: "Initial status." }),
+  ),
+  current: Type.Optional(Type.String({ description: "Headline of current tool/step." })),
+  total: Type.Optional(Type.Number({ description: "Expected number of steps/items." })),
+  completed: Type.Optional(Type.Number({ description: "Steps/items completed so far." })),
+});
+
+export const SubgoalsUpdateSchema = Type.Object({
+  subgoalId: Type.String({ description: "Subgoal id returned by subgoals.create." }),
+  status: Type.Optional(Type.String({ enum: ["pending", "running", "completed", "failed", "blocked"] })),
+  current: Type.Optional(Type.String({ description: "Headline of current tool/step." })),
+  total: Type.Optional(Type.Number({ description: "Expected number of steps/items." })),
+  completed: Type.Optional(Type.Number({ description: "Steps/items completed so far." })),
+  output: Type.Optional(Type.Unknown({ description: "Structured output produced by the subgoal." })),
+  error: Type.Optional(Type.String({ description: "Error message if failed." })),
+  usage: Type.Optional(
+    Type.Object({
+      input: Type.Optional(Type.Number()),
+      output: Type.Optional(Type.Number()),
+      cost: Type.Optional(Type.Number()),
+    }),
+  ),
+});
+
+export const SubgoalsListSchema = Type.Object({
+  goalId: Type.Optional(Type.String({ description: "Filter subgoals by goal/run id." })),
+});
+
+export const SubgoalsResultSchema = Type.Object({
+  id: Type.String(),
+  goalId: Type.String(),
+  parentSubgoalId: Type.Optional(Type.String()),
+  name: Type.String(),
+  status: Type.String(),
+  current: Type.Optional(Type.String()),
+  total: Type.Optional(Type.Number()),
+  completed: Type.Optional(Type.Number()),
+  error: Type.Optional(Type.String()),
+  usage: Type.Optional(
+    Type.Object({
+      input: Type.Optional(Type.Number()),
+      output: Type.Optional(Type.Number()),
+      cost: Type.Optional(Type.Number()),
+    }),
+  ),
+  startedAt: Type.Number(),
+  updatedAt: Type.Number(),
+  finishedAt: Type.Optional(Type.Number()),
+});
+
+// ── Activity query host calls ──────────────────────────────────────────────
+
+export const ActivitySnapshotSchema = Type.Object({});
+
+export const ActivityRunsSchema = Type.Object({});
+
+export const ActivityAgentsSchema = Type.Object({});
+
+export const ActivitySubgoalsSchema = Type.Object({
+  goalId: Type.Optional(Type.String({ description: "Filter subgoals by goal/run id." })),
+});
+
+// ── Cost Management ────────────────────────────────────────────────────────
+
+export const CostEstimateSchema = Type.Object({
+  model: Type.String(),
+  template: Type.Optional(Type.String()),
+  taskDescription: Type.String(),
+  contextTokens: Type.Optional(Type.Number()),
+});
+
+export const CostBudgetSchema = Type.Object({
+  maxCostPerRun: Type.Optional(Type.Number({ description: "Maximum cost for entire run (USD)" })),
+  maxCostPerAgent: Type.Optional(Type.Number({ description: "Maximum cost per agent (USD)" })),
+  maxCostPerPhase: Type.Optional(Type.Number({ description: "Maximum cost per phase (USD)" })),
+  maxTokensPerRun: Type.Optional(Type.Number({ description: "Maximum tokens for entire run" })),
+  maxTokensPerAgent: Type.Optional(Type.Number({ description: "Maximum tokens per agent" })),
+  warningThreshold: Type.Optional(Type.Number({ description: "Warning threshold 0-1 (e.g., 0.8 = 80%)", minimum: 0, maximum: 1 })),
+});
+
+export const CostRecordSchema = Type.Object({
+  runId: Type.Optional(Type.String()),
+  agentId: Type.Optional(Type.String()),
+});
+
+export const CostReportSchema = Type.Object({
+  runId: Type.Optional(Type.String()),
+  format: Type.Optional(Type.String({ enum: ["text", "json"], description: "Output format" })),
+});
+
+export const CostOptimizationSchema = Type.Object({
+  runId: Type.String(),
 });

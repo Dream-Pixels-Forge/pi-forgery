@@ -25,16 +25,35 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { ForgeryActivityStore } from "../activity/store";
+import type { ForgerySubgoalStatus } from "../activity/types";
 import { AgentRunner } from "../agents/runner";
+import {
+  EnhancedAgentRunner,
+  createEnhancedAgentRunner,
+  type EnhancedAgentRunRequest,
+} from "../agents/enhanced-runner";
 import {
   HostCallRegistry,
   runForgery,
   type HostExecCtx,
 } from "./runtime";
 import {
+  ActivityAgentsSchema,
+  ActivityRunsSchema,
+  ActivitySnapshotSchema,
+  ActivitySubgoalsSchema,
   AgentsList,
   AgentsRun,
+  AgentsRunEnhanced,
+  AgentsRunEnhancedResult,
   AgentsStop,
+  CostBudgetSchema,
+  CostEstimateSchema,
+  CostOptimizationSchema,
+  CostRecordSchema,
+  CostReportSchema,
+  DevLoopRun,
+  DevLoopResultSchema,
   PiBash,
   PiEdit,
   PiExec,
@@ -46,11 +65,22 @@ import {
   PiShowImages,
   PiShowVideo,
   PiWrite,
+  SubgoalsCreateSchema,
+  SubgoalsListSchema,
+  SubgoalsResultSchema,
+  SubgoalsUpdateSchema,
+  WorkflowResolve,
   WorkflowRun,
   WorkflowStatus,
   WorkflowStop,
-  WorkflowResolve,
 } from "./schemas";
+import {
+  DevLoopRunner,
+  runDevLoop,
+  createPhaseRunners,
+  type DevLoopConfig,
+} from "../agents/dev-loop";
+import { CostManager, createCostManager, type CostBudget } from "../agents/cost-manager";
 import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
 import { createResolver } from "../workflow/resolver";
@@ -88,6 +118,9 @@ export function makeRegistry(
     runner,
     liveCtx?.cwd ?? process.cwd(),
   );
+
+  // Enhanced agent runner for high-accuracy one-shot agents
+  const enhancedRunner = createEnhancedAgentRunner(runner);
 
   // Shared exec helper (node:child_process — `ctx.exec` is not part of the
   // public ExtensionContext API).
@@ -469,7 +502,563 @@ export function makeRegistry(
     execute: async (args) => ({ value: runner.stop(String(args.id ?? "")) }),
   });
 
-  // ── Workflow (EGM Goldfish review) host calls ─────────────────────────
+  // ── Enhanced one-shot agents (high accuracy) ───────────────────────────
+
+  registry.register({
+    ref: "agents.runEnhanced",
+    schema: AgentsRunEnhanced,
+    kind: "agent",
+    execute: async (args, hctx, _signal) => {
+      const task = String(args.task ?? "");
+      if (!task) return { error: "agents.runEnhanced: task is required" };
+
+      // Build enhanced request
+      const req: EnhancedAgentRunRequest = {
+        task,
+        cwd: hctx.cwd,
+        model: args.model ? String(args.model) : undefined,
+        timeoutMs: args.timeoutMs ? Number(args.timeoutMs) : undefined,
+        systemPrompt: args.systemPrompt ? String(args.systemPrompt) : undefined,
+        name: args.name ? String(args.name) : undefined,
+        template: args.template as EnhancedAgentRunRequest["template"],
+        outputSchema: args.outputSchema as EnhancedAgentRunRequest["outputSchema"],
+        maxRetries: args.maxRetries ? Number(args.maxRetries) : undefined,
+        qualityGates: args.qualityGates as EnhancedAgentRunRequest["qualityGates"],
+        injectContext: args.injectContext !== undefined ? Boolean(args.injectContext) : true,
+        allowedTools: args.allowedTools as EnhancedAgentRunRequest["allowedTools"],
+        budget: args.budget as EnhancedAgentRunRequest["budget"],
+        parentRunId: hctx.runId,
+      };
+
+      const result = await enhancedRunner.runEnhanced(req);
+      const agent = runner.get(result.id);
+      if (agent) activity.addAgent(agent);
+      const ok = result.status === "completed";
+
+      // Update activity with metrics
+      if (result.usage) {
+        const run = activity.get(hctx.runId);
+        if (run) {
+          if (!run.metrics) run.metrics = { toolCalls: 0, tokens: 0, cost: 0 };
+          run.metrics.toolCalls += 1;
+          run.metrics.tokens += result.usage.output ?? 0;
+        }
+      }
+
+      return {
+        value: {
+          id: result.id,
+          status: result.status,
+          text: result.text,
+          usage: result.usage,
+          attempts: result.attempts,
+          validationErrors: result.validationErrors,
+          qualityGateFailures: result.qualityGateFailures,
+          structuredOutput: result.structuredOutput,
+        },
+        preview: `${result.status} (attempt ${result.attempts}) ${(result.text ?? "").slice(0, 40)}`,
+        error: ok ? undefined : result.error ?? result.status,
+      };
+    },
+  });
+
+  // Convenience: pre-configured specialist agents
+  const specialistTemplates = [
+    { ref: "agents.coder", template: "coder" as const },
+    { ref: "agents.researcher", template: "researcher" as const },
+    { ref: "agents.reviewer", template: "reviewer" as const },
+    { ref: "agents.planner", template: "planner" as const },
+    { ref: "agents.tester", template: "tester" as const },
+    { ref: "agents.documenter", template: "documenter" as const },
+    { ref: "agents.debugger", template: "debugger" as const },
+    { ref: "agents.architect", template: "architect" as const },
+    { ref: "agents.security", template: "security" as const },
+    { ref: "agents.design", template: "design" as const },
+    { ref: "agents.git", template: "git" as const },
+    { ref: "agents.sniper", template: "sniper" as const },
+    { ref: "agents.teammate", template: "teammate" as const },
+  ];
+
+  for (const { ref, template } of specialistTemplates) {
+    registry.register({
+      ref,
+      schema: Type.Object({
+        task: Type.String({ description: `Task for the ${template} agent.` }),
+        cwd: Type.Optional(Type.String()),
+        model: Type.Optional(Type.String()),
+        timeoutMs: Type.Optional(Type.Number()),
+        systemPrompt: Type.Optional(Type.String()),
+        outputSchema: Type.Optional(Type.Unknown()),
+        maxRetries: Type.Optional(Type.Number({ minimum: 0, maximum: 5 })),
+      }),
+      kind: "agent",
+      execute: async (args, hctx, _signal) => {
+        const task = String(args.task ?? "");
+        if (!task) return { error: `${ref}: task is required` };
+
+        const req: EnhancedAgentRunRequest = {
+          task,
+          cwd: hctx.cwd,
+          model: args.model ? String(args.model) : undefined,
+          timeoutMs: args.timeoutMs ? Number(args.timeoutMs) : undefined,
+          systemPrompt: args.systemPrompt ? String(args.systemPrompt) : undefined,
+          template,
+          outputSchema: args.outputSchema as EnhancedAgentRunRequest["outputSchema"],
+          maxRetries: args.maxRetries ? Number(args.maxRetries) : undefined,
+          parentRunId: hctx.runId,
+        };
+
+        const result = await enhancedRunner.runEnhanced(req);
+        const agent = runner.get(result.id);
+        if (agent) activity.addAgent(agent);
+        const ok = result.status === "completed";
+
+        return {
+          value: {
+            id: result.id,
+            status: result.status,
+            text: result.text,
+            usage: result.usage,
+            attempts: result.attempts,
+            validationErrors: result.validationErrors,
+            qualityGateFailures: result.qualityGateFailures,
+            structuredOutput: result.structuredOutput,
+          },
+          preview: `${template}: ${result.status} (attempt ${result.attempts}) ${(result.text ?? "").slice(0, 40)}`,
+          error: ok ? undefined : result.error ?? result.status,
+        };
+      },
+    });
+  }
+
+  // Parallel specialist agent execution
+  registry.register({
+    ref: "agents.runParallel",
+    schema: Type.Object({
+      agents: Type.Array(Type.Object({
+        ref: Type.String({ enum: specialistTemplates.map(t => t.ref) }),
+        task: Type.String(),
+        outputSchema: Type.Optional(Type.Unknown()),
+      }), { description: "Array of specialist agents to run in parallel." }),
+    }),
+    kind: "agent",
+    execute: async (args, hctx, _signal) => {
+      const agents = Array.isArray(args.agents) ? args.agents : [];
+      if (agents.length === 0) return { error: "agents.runParallel: agents array required" };
+
+      const requests: EnhancedAgentRunRequest[] = agents.map((a) => ({
+        task: String(a.task),
+        cwd: hctx.cwd,
+        template: a.ref.replace("agents.", "") as EnhancedAgentRunRequest["template"],
+        outputSchema: a.outputSchema as EnhancedAgentRunRequest["outputSchema"],
+        parentRunId: hctx.runId,
+      }));
+
+      const results = await enhancedRunner.runParallel(requests);
+      for (const result of results) {
+        const agent = runner.get(result.id);
+        if (agent) activity.addAgent(agent);
+      }
+
+      return {
+        value: results.map((r) => ({
+          id: r.id,
+          status: r.status,
+          text: r.text,
+          attempts: r.attempts,
+          structuredOutput: r.structuredOutput,
+        })),
+        preview: `parallel: ${results.length} agents, ${results.filter(r => r.status === "completed").length} completed`,
+      };
+    },
+  });
+
+  // Sequential pipeline of specialist agents
+  registry.register({
+    ref: "agents.runPipeline",
+    schema: Type.Object({
+      steps: Type.Array(Type.Object({
+        ref: Type.String({ enum: specialistTemplates.map(t => t.ref) }),
+        task: Type.String(),
+        outputSchema: Type.Optional(Type.Unknown()),
+      }), { description: "Array of specialist agents to run sequentially (each passes context to next)." }),
+    }),
+    kind: "agent",
+    execute: async (args, hctx, _signal) => {
+      const steps = Array.isArray(args.steps) ? args.steps : [];
+      if (steps.length === 0) return { error: "agents.runPipeline: steps array required" };
+
+      const requests: EnhancedAgentRunRequest[] = steps.map((s) => ({
+        task: String(s.task),
+        cwd: hctx.cwd,
+        template: s.ref.replace("agents.", "") as EnhancedAgentRunRequest["template"],
+        outputSchema: s.outputSchema as EnhancedAgentRunRequest["outputSchema"],
+        parentRunId: hctx.runId,
+      }));
+
+      const results = await enhancedRunner.runPipeline(requests);
+      for (const result of results) {
+        const agent = runner.get(result.id);
+        if (agent) activity.addAgent(agent);
+      }
+
+      return {
+        value: results.map((r) => ({
+          id: r.id,
+          status: r.status,
+          text: r.text,
+          attempts: r.attempts,
+          structuredOutput: r.structuredOutput,
+        })),
+        preview: `pipeline: ${results.length} steps, ${results.filter(r => r.status === "completed").length} completed`,
+      };
+    },
+  });
+
+  // ── Production Development Loop (research-plan-test-code-review-learn) ─────
+
+  registry.register({
+    ref: "devloop.run",
+    schema: DevLoopRun,
+    kind: "agent",
+    execute: async (args, hctx, _signal) => {
+      const task = String(args.task ?? "");
+      if (!task) return { error: "devloop.run: task is required" };
+
+      const loopRunner = new DevLoopRunner(runner, activity, hctx.cwd, hctx.runId);
+      const result = await loopRunner.run(task, {
+        maxLoopIterations: args.maxLoopIterations ? Number(args.maxLoopIterations) : 3,
+        maxPhaseRetries: args.maxPhaseRetries ? Number(args.maxPhaseRetries) : 2,
+        enableLearning: args.enableLearning !== undefined ? Boolean(args.enableLearning) : true,
+        qualityThreshold: args.qualityThreshold ? Number(args.qualityThreshold) : 0.8,
+        phaseOrder: args.phaseOrder as DevLoopConfig["phaseOrder"],
+        globalContext: args.globalContext ? String(args.globalContext) : undefined,
+        budget: args.budget as DevLoopConfig["budget"],
+      });
+
+      // Record all agents from the loop
+      for (const phase of result.phases) {
+        const agent = runner.get(phase.result.id);
+        if (agent) activity.addAgent(agent);
+      }
+
+      return {
+        value: result,
+        preview: `devloop: ${result.success ? "SUCCESS" : "PARTIAL"} after ${result.iterations} iterations, ${result.totalMetrics.phasesCompleted}/${result.phases.length} phases passed`,
+        error: result.success ? undefined : `Loop completed with failures: ${result.phases.filter(p => !p.passed).map(p => p.phase).join(", ")}`,
+      };
+    },
+  });
+
+  // Individual phase runners for step-by-step control
+  const phaseRunners = createPhaseRunners(runner, activity, undefined as any, undefined as any);
+
+  for (const [phaseName, phaseRunner] of Object.entries({
+    research: () => phaseRunners.research,
+    plan: () => phaseRunners.plan,
+    test: () => phaseRunners.test,
+    code: () => phaseRunners.code,
+    review: () => phaseRunners.review,
+    learn: () => phaseRunners.learn,
+  })) {
+    registry.register({
+      ref: `devloop.${phaseName}`,
+      schema: Type.Object({
+        task: Type.String({ description: `Task for ${phaseName} phase.` }),
+        context: Type.Optional(Type.String({ description: "Context from previous phases." })),
+        research: Type.Optional(Type.Unknown({ description: "Research output (for plan/test/code/review)." })),
+        plan: Type.Optional(Type.Unknown({ description: "Plan output (for test/code/review)." })),
+        tests: Type.Optional(Type.Unknown({ description: "Test output (for code/review)." })),
+        code: Type.Optional(Type.Unknown({ description: "Code output (for review)." })),
+        phases: Type.Optional(Type.Array(Type.Unknown(), { description: "All phases (for learn)." })),
+      }),
+      kind: "agent",
+      execute: async (args, hctx, _signal) => {
+        // This is a simplified version - the real phase runners need the enhanced runner
+        const enhanced = new EnhancedAgentRunner(runner);
+        const task = String(args.task ?? "");
+        if (!task) return { error: `devloop.${phaseName}: task is required` };
+
+        let prompt = task;
+        if (args.context) prompt += `\n\nContext: ${args.context}`;
+        if (args.research) prompt += `\n\nResearch: ${JSON.stringify(args.research)}`;
+        if (args.plan) prompt += `\n\nPlan: ${JSON.stringify(args.plan)}`;
+        if (args.tests) prompt += `\n\nTests: ${JSON.stringify(args.tests)}`;
+        if (args.code) prompt += `\n\nCode: ${JSON.stringify(args.code)}`;
+        if (args.phases) prompt += `\n\nPhases: ${JSON.stringify(args.phases)}`;
+
+        const templateMap: Record<string, string> = {
+          research: "researcher",
+          plan: "planner",
+          test: "tester",
+          code: "coder",
+          review: "reviewer",
+          learn: "general",
+        };
+
+        const result = await enhanced.runEnhanced({
+          task: prompt,
+          cwd: hctx.cwd,
+          template: templateMap[phaseName] as any,
+          parentRunId: hctx.runId,
+          name: `devloop-${phaseName}`,
+          maxRetries: 2,
+        });
+
+        const agent = runner.get(result.id);
+        if (agent) activity.addAgent(agent);
+
+        return {
+          value: result,
+          preview: `${phaseName}: ${result.status} (attempt ${result.attempts})`,
+          error: result.status === "completed" ? undefined : result.error,
+        };
+      },
+    });
+  }
+
+  // ── Cost Management host calls ───────────────────────────────────────
+
+// Create a cost manager for this execution context
+const costManager = createCostManager(activity);
+
+// Estimate cost before running
+registry.register({
+  ref: "cost.estimate",
+  schema: CostEstimateSchema,
+  kind: "tool",
+  execute: async (args) => {
+    const model = String(args.model ?? "default");
+    const template = args.template ? String(args.template) : undefined;
+    const taskDescription = String(args.taskDescription ?? "");
+    const contextTokens = args.contextTokens ? Number(args.contextTokens) : 0;
+    
+    if (!taskDescription) return { error: "cost.estimate: taskDescription is required" };
+    
+    const estimate = costManager.estimateCost(model, taskDescription, template, contextTokens);
+    return { value: estimate, preview: `estimate: ~$${estimate.estimatedCost.toFixed(4)} (${estimate.estimatedInputTokens}→${estimate.estimatedOutputTokens} tokens)` };
+  },
+});
+
+// Get cost report for a run
+registry.register({
+  ref: "cost.report",
+  schema: CostReportSchema,
+  kind: "tool",
+  execute: async (args, hctx) => {
+    const runId = args.runId ? String(args.runId) : hctx.runId;
+    const format = args.format ? String(args.format) : "text";
+    
+    const report = costManager.exportReport(runId);
+    return { value: report, preview: `cost report: ${runId.slice(0, 8)}` };
+  },
+});
+
+// Get optimization recommendations
+registry.register({
+  ref: "cost.optimize",
+  schema: CostOptimizationSchema,
+  kind: "tool",
+  execute: async (args) => {
+    const runId = String(args.runId ?? "");
+    if (!runId) return { error: "cost.optimize: runId is required" };
+    
+    const recommendations = costManager.getOptimizationRecommendations(runId);
+    return { value: recommendations, preview: `${recommendations.length} optimization(s) found` };
+  },
+});
+
+// Set budget for current run
+registry.register({
+  ref: "cost.budget",
+  schema: CostBudgetSchema,
+  kind: "tool",
+  execute: async (args, hctx) => {
+    const runId = hctx.runId;
+    const budget: CostBudget = {
+      maxCostPerRun: args.maxCostPerRun ? Number(args.maxCostPerRun) : undefined,
+      maxCostPerAgent: args.maxCostPerAgent ? Number(args.maxCostPerAgent) : undefined,
+      maxCostPerPhase: args.maxCostPerPhase ? Number(args.maxCostPerPhase) : undefined,
+      maxTokensPerRun: args.maxTokensPerRun ? Number(args.maxTokensPerRun) : undefined,
+      maxTokensPerAgent: args.maxTokensPerAgent ? Number(args.maxTokensPerAgent) : undefined,
+      warningThreshold: args.warningThreshold ? Number(args.warningThreshold) : undefined,
+    };
+    
+    costManager.setBudget(runId, budget);
+    return { value: { ok: true, budget }, preview: `budget set for ${runId.slice(0, 8)}` };
+  },
+});
+
+// Get cost records for a run
+registry.register({
+  ref: "cost.records",
+  schema: CostRecordSchema,
+  kind: "tool",
+  execute: async (args, hctx) => {
+    const runId = args.runId ? String(args.runId) : hctx.runId;
+    const agentId = args.agentId ? String(args.agentId) : undefined;
+    
+    const run = costManager.getRunCost(runId);
+    if (!run) return { error: `cost.records: run ${runId} not found` };
+    
+    let records = run.agentCosts;
+    if (agentId) records = records.filter((r: any) => r.agentId === agentId);
+    
+    return { value: records, preview: `${records.length} cost record(s) for ${runId.slice(0, 8)}` };
+  },
+});
+
+// Get total costs across all runs
+registry.register({
+  ref: "cost.totals",
+  schema: Type.Object({}),
+  kind: "tool",
+  execute: async () => {
+    const totals = costManager.getTotalCosts();
+    return { value: totals, preview: `global: $${totals.totalCost.toFixed(4)} | ${totals.runCount} runs | ${totals.agentCount} agents` };
+  },
+});
+
+// ── Subgoal host calls ────────────────────────────────────────────────
+
+  registry.register({
+    ref: "subgoals.create",
+    schema: SubgoalsCreateSchema,
+    kind: "tool",
+    execute: async (args, hctx) => {
+      const goalId = args.goalId ? String(args.goalId) : hctx.runId;
+      const subgoal = activity.subgoal({
+        goalId,
+        parentSubgoalId: args.parentSubgoalId ? String(args.parentSubgoalId) : undefined,
+        name: String(args.name ?? ""),
+        description: args.description ? String(args.description) : undefined,
+        acceptanceCriteria: args.acceptanceCriteria as string[] | undefined,
+        status: (args.status as ForgerySubgoalStatus | undefined) ?? "pending",
+        current: args.current ? String(args.current) : undefined,
+        total: args.total ? Number(args.total) : undefined,
+        completed: args.completed ? Number(args.completed) : undefined,
+      });
+      return {
+        value: subgoal,
+        preview: `subgoal ${subgoal.name} · ${subgoal.status} · ${subgoal.id.slice(0, 8)}`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "subgoals.update",
+    schema: SubgoalsUpdateSchema,
+    kind: "tool",
+    execute: async (args) => {
+      const subgoalId = String(args.subgoalId ?? "");
+      if (!subgoalId) return { error: "subgoals.update: subgoalId is required" };
+      const subgoal = activity.updateSubgoal(subgoalId, {
+        status: args.status as ForgerySubgoalStatus | undefined,
+        current: args.current ? String(args.current) : undefined,
+        total: args.total ? Number(args.total) : undefined,
+        completed: args.completed ? Number(args.completed) : undefined,
+        output: args.output,
+        error: args.error ? String(args.error) : undefined,
+        usage: args.usage as { input?: number; output?: number; cost?: number } | undefined,
+      });
+      if (!subgoal) return { error: `subgoals.update: subgoal ${subgoalId} not found` };
+      return {
+        value: subgoal,
+        preview: `subgoal ${subgoal.name} → ${subgoal.status}`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "subgoals.list",
+    schema: SubgoalsListSchema,
+    kind: "tool",
+    execute: async (args, hctx) => {
+      const goalId = args.goalId ? String(args.goalId) : hctx.runId;
+      const subgoals = activity.subgoalsForGoal(goalId);
+      return {
+        value: subgoals,
+        preview: `${subgoals.length} subgoal(s) for ${goalId.slice(0, 8)}`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "subgoals.finish",
+    schema: Type.Object({
+      subgoalId: Type.String({ description: "Subgoal id returned by subgoals.create." }),
+      success: Type.Optional(Type.Boolean({ description: "Whether the subgoal succeeded (default true)." })),
+      error: Type.Optional(Type.String({ description: "Error message if the subgoal failed." })),
+    }),
+    kind: "tool",
+    execute: async (args) => {
+      const subgoalId = String(args.subgoalId ?? "");
+      if (!subgoalId) return { error: "subgoals.finish: subgoalId is required" };
+      const subgoal = activity.finishSubgoal(subgoalId, args.success !== false, args.error ? String(args.error) : undefined);
+      if (!subgoal) return { error: `subgoals.finish: subgoal ${subgoalId} not found` };
+      return {
+        value: subgoal,
+        preview: `subgoal ${subgoal.name} → ${subgoal.status}`,
+      };
+    },
+  });
+
+// ── Activity query host calls ─────────────────────────────────────────
+
+  registry.register({
+    ref: "activity.snapshot",
+    schema: ActivitySnapshotSchema,
+    kind: "tool",
+    execute: async (_args, hctx) => {
+      const runId = hctx.runId;
+      const run = activity.get(runId);
+      // Return a read-only snapshot of the full activity surface.
+      return {
+        value: activity.snapshot(),
+        preview: `snapshot: ${activity.runs().length} run(s), ${activity.agents().length} agent(s)`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "activity.runs",
+    schema: ActivityRunsSchema,
+    kind: "tool",
+    execute: async () => {
+      return {
+        value: activity.runs(),
+        preview: `${activity.runs().length} run(s)`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "activity.agents",
+    schema: ActivityAgentsSchema,
+    kind: "tool",
+    execute: async () => {
+      return {
+        value: activity.agents(),
+        preview: `${activity.agents().length} agent(s)`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "activity.subgoals",
+    schema: ActivitySubgoalsSchema,
+    kind: "tool",
+    execute: async (args, hctx) => {
+      const goalId = args.goalId ? String(args.goalId) : hctx.runId;
+      const subs = activity.subgoalsForGoal(goalId);
+      return {
+        value: subs,
+        preview: `${subs.length} subgoal(s) for ${goalId.slice(0, 8)}`,
+      };
+    },
+  });
+
+// ── Workflow (EGM Goldfish review) host calls ─────────────────────────
 
   registry.register({
     ref: "workflow.run",

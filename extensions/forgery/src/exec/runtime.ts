@@ -133,7 +133,11 @@ export function buildHostProxy(
   registry: HostCallRegistry,
   ctx: HostExecCtx,
   signal: AbortSignal,
-): { pi: Record<string, (...a: unknown[]) => Promise<unknown>>; agents: Record<string, (...a: unknown[]) => Promise<unknown>> } {
+): {
+  pi: Record<string, (...a: unknown[]) => Promise<unknown>>;
+  agents: Record<string, (...a: unknown[]) => Promise<unknown>>;
+  activity: Record<string, (...a: unknown[]) => Promise<unknown>>;
+} {
   const make = (prefix: string): Record<string, (...a: unknown[]) => Promise<unknown>> => {
     const target: Record<string, (...a: unknown[]) => Promise<unknown>> = {};
     let callCounter = 0;
@@ -192,6 +196,7 @@ export function buildHostProxy(
   return {
     pi: make("pi"),
     agents: make("agents"),
+    activity: make("activity"),
   };
 }
 
@@ -235,18 +240,18 @@ export async function runProgram(
     }
   }
 
-  const { pi, agents } = buildHostProxy(registry, ctx, signal);
+  const { pi, agents, activity } = buildHostProxy(registry, ctx, signal);
 
   // Wrap the body in an async function so top-level `await` works and the
   // user can use `return` in their program body. `new Function` produces:
-  //   function anonymous(pi, agents, __host) {
+  //   function anonymous(pi, agents, activity, __host) {
   //     return (async () => {
   //       "use strict";
   //       ...user code...
   //     })();
   //   }
   const body = `\nreturn (async () => {\n"use strict";\n${code}\n})();\n`;
-  const factory: Function = new Function("pi", "agents", "__host", body);
+  const factory: Function = new Function("pi", "agents", "activity", "__host", body);
 
   const hostHandle = {
     registry,
@@ -255,7 +260,7 @@ export async function runProgram(
   };
 
   try {
-    const value = await factory(pi, agents, hostHandle);
+    const value = await factory(pi, agents, activity, hostHandle);
     if (signal.aborted) {
       return { ok: false, error: "aborted" };
     }
