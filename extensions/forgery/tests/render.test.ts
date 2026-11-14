@@ -26,23 +26,14 @@ test("ForgeryFooter: renders idle when no runs", () => {
     contextUsage: () => ({ tokens: 21_300, contextWindow: 32_000, percent: 42 }),
     modelId: () => "minimax/minimax-m3.1-flash",
     effort: () => "medium",
-    cwd: () => "/home/user/my-project",
-    compactCount: () => 1,
-    compactMax: () => 5,
-    issuesOpen: () => 3,
-    issuesClosed: () => 12,
-    prsOpen: () => 1,
-    prsClosed: () => 5,
-    ciStatus: () => "green",
   };
   const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /main/);
-  assert.match(lines[0], /42%/);
+  assert.match(lines[0], /ctx 42%/);
   assert.match(lines[0], /m3\.1-flash/);
   assert.match(lines[0], /med/); // effort short form
-  assert.match(lines[0], /my-project/);
 });
 
 test("ForgeryFooter: renders active run metrics", () => {
@@ -59,22 +50,12 @@ test("ForgeryFooter: renders active run metrics", () => {
     contextUsage: () => null,
     modelId: () => undefined,
     effort: () => null,
-    cwd: () => null,
-    compactCount: () => null,
-    compactMax: () => null,
-    issuesOpen: () => null,
-    issuesClosed: () => null,
-    prsOpen: () => null,
-    prsClosed: () => null,
-    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /demo/);
   assert.match(lines[0], /1 calls/);
-  assert.match(lines[0], /1\.2k tok/);
-  assert.match(lines[0], /\$0\.42/);
   void run;
 });
 
@@ -85,14 +66,6 @@ test("ForgeryFooter: statusString() mirrors a compact line", () => {
     contextUsage: () => null,
     modelId: () => undefined,
     effort: () => null,
-    cwd: () => null,
-    compactCount: () => null,
-    compactMax: () => null,
-    issuesOpen: () => null,
-    issuesClosed: () => null,
-    prsOpen: () => null,
-    prsClosed: () => null,
-    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   assert.equal(footer.statusString(), "forgery · idle");
@@ -128,48 +101,14 @@ test("ForgeryFooter: clamps a context percentage above 100", () => {
     contextUsage: () => ({ tokens: 250_000, contextWindow: 200_000, percent: 125 }),
     modelId: () => undefined,
     effort: () => null,
-    cwd: () => null,
-    compactCount: () => null,
-    compactMax: () => null,
-    issuesOpen: () => null,
-    issuesClosed: () => null,
-    prsOpen: () => null,
-    prsClosed: () => null,
-    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
-  // Pi does not clamp `percent`; the bar must not build a negative repeat count.
+  // Percent above 100 is clamped for display but not for the bar (no bar now).
   assert.doesNotThrow(() => footer.render(200));
-  assert.match(footer.render(200)[0], /125%/);
+  assert.match(footer.render(200)[0], /ctx 125%/);
 });
 
-test("ForgeryFooter: renders subgoal progress when subgoals exist", () => {
-  const store = new ForgeryActivityStore();
-  store.start("run-1", { name: "demo" });
-  store.subgoal({ goalId: "run-1", name: "write tests", status: "completed", total: 3, completed: 3 });
-  store.subgoal({ goalId: "run-1", name: "write code", status: "running", total: 5, completed: 2 });
-
-  const footerCtx: ForgeryFooterContext = {
-    gitBranch: () => null,
-    contextUsage: () => null,
-    modelId: () => undefined,
-    effort: () => null,
-    cwd: () => null,
-    compactCount: () => null,
-    compactMax: () => null,
-    issuesOpen: () => null,
-    issuesClosed: () => null,
-    prsOpen: () => null,
-    prsClosed: () => null,
-    ciStatus: () => null,
-  };
-  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
-  const lines = footer.render(200);
-  // subgoal segment: completed subgoal count / total subgoal count across active runs
-  assert.match(lines[0], /subgoals 1\/2/);
-});
-
-test("ForgeryFooter: no subgoal segment when no subgoals", () => {
+test("ForgeryFooter: no subgoal segment (minimal Claude Code style)", () => {
   const store = new ForgeryActivityStore();
   store.start("run-1", { name: "demo" });
 
@@ -178,14 +117,6 @@ test("ForgeryFooter: no subgoal segment when no subgoals", () => {
     contextUsage: () => null,
     modelId: () => undefined,
     effort: () => null,
-    cwd: () => null,
-    compactCount: () => null,
-    compactMax: () => null,
-    issuesOpen: () => null,
-    issuesClosed: () => null,
-    prsOpen: () => null,
-    prsClosed: () => null,
-    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const lines = footer.render(200);
@@ -237,19 +168,10 @@ test("ForgeryFooter: renders a single context percentage, not duplicated", () =>
     contextUsage: () => ({ tokens: 21_300, contextWindow: 32_000, percent: 42 }),
     modelId: () => undefined,
     effort: () => null,
-    cwd: () => null,
-    compactCount: () => null,
-    compactMax: () => null,
-    issuesOpen: () => null,
-    issuesClosed: () => null,
-    prsOpen: () => null,
-    prsClosed: () => null,
-    ciStatus: () => null,
   };
   const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
   const line = footer.render(200)[0];
-  // #progressBar already appends formatPercent(pct), so ctxSeg must not add it again.
   const pctOccurrences = line.match(/42%/g);
   assert.equal(pctOccurrences?.length, 1, "context percentage should render exactly once");
-  assert.match(line, /ctx \[███░░░\] 42%/);
+  assert.match(line, /ctx 42%/);
 });

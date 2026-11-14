@@ -344,19 +344,6 @@ export class ForgeryUiController {
       contextUsage: () => this.contextUsageReader.get(),
       modelId: () => this.#read((c) => c.model?.id),
       effort: () => this.#read((c) => c.thinkingLevel) ?? null,
-      cwd: () => this.#read((c) => c.cwd) ?? null,
-      // Compact (context reset) tracking lives in the activity store.
-      compactCount: () => {
-        const activeId = this.store.activeRunId();
-        const run = activeId ? this.store.get(activeId) : undefined;
-        return run?.compacts ?? null;
-      },
-      compactMax: () => 5,
-      issuesOpen: () => this.githubStats.issuesOpen(),
-      issuesClosed: () => this.githubStats.issuesClosed(),
-      prsOpen: () => this.githubStats.prsOpen(),
-      prsClosed: () => this.githubStats.prsClosed(),
-      ciStatus: () => this.githubStats.ciStatus(),
     };
     this.footer = new ForgeryFooter(() => this.ui!.theme, () => this.store.snapshot(), footerCtx);
     // Mount: setFooter takes a factory `(tui, theme, footerData) => Component`.

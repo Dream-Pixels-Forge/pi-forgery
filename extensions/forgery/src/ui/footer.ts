@@ -1,11 +1,9 @@
 /**
- * pi-forgery — status-line footer.
+ * pi-forgery — status-line footer (Claude Code style).
  *
- * The "status line / footer" surface the user asked for. Renders a single
- * line (or two when wide) with:
+ * A single compact line — never two — with just the essentials:
  *
- *   git branch · context progress · model (effort) · working dir · ctx tokens
- *   · compacts · issues · PRs · CI · active run status · calls · tokens · cost · duration
+ *   model · branch · ctx N% · [agent ◐]
  *
  * Every value comes from the activity store or the live host context — no
  * fabricated telemetry. The controller also mirrors a compact status string
@@ -21,12 +19,11 @@ import {
   animatedStatusGlyph,
   colorStatus,
   formatCost,
-  formatDuration,
   formatPercent,
   formatTokens,
   safeText,
-  statusLine,
   statusGlyph,
+  statusLine,
   truncate,
 } from "./format";
 
@@ -42,29 +39,12 @@ export interface ForgeryFooterContext {
   modelId: () => string | undefined;
   /** Thinking/effort level (Pi's ThinkingLevel), or null. */
   effort: () => string | null;
-  /** Working directory, or null. */
-  cwd: () => string | null;
-  /** Compacts used so far (compact → context reset), or null. */
-  compactCount: () => number | null;
-  /** Max compacts before handoff is recommended, default 5. */
-  compactMax: () => number | null;
-  /** Open issue count, or null. */
-  issuesOpen: () => number | null;
-  /** Closed issue count, or null. */
-  issuesClosed: () => number | null;
-  /** Open PR count, or null. */
-  prsOpen: () => number | null;
-  /** Closed PR count, or null. */
-  prsClosed: () => number | null;
-  /** CI status: "pending" | "failed" | "green", or null. */
-  ciStatus: () => string | null;
 }
 
 /**
- * A one-line (or two-line when wide) status-line component.
+ * Claude Code–inspired status line: one compact line, essentials only.
  *
- * `snapshot` is a lazy getter — the controller recomputes it at most every
- * ~100 ms and calls `invalidate()` when the revision changes.
+ * Segments: model · branch · ctx N% · [active agent with spinner].
  */
 export class ForgeryFooter implements Component {
   private theme: () => Theme;
@@ -79,17 +59,10 @@ export class ForgeryFooter implements Component {
     this.footerCtx = footerCtx;
   }
 
-  /**
-   * pi-tui calls this when the theme changes or the component must re-render
-   * from scratch. The footer keeps no cached rendering state — it reads live
-   * data on every render — so there is nothing to discard.
-   */
   invalidate(): void {}
 
   /**
-   * The compact status string also written to `setStatus("forgery", …)`.
-   * Used by Pi's built-in footer when a third-party extension owns the
-   * custom footer slot.
+   * Compact status string mirrored into `setStatus("forgery", …)`.
    */
   statusString(): string {
     this.#frame += 1;
@@ -115,22 +88,13 @@ export class ForgeryFooter implements Component {
     ]);
   }
 
-  /** Render a compact progress bar: "[████░░░░] 45%". */
-  #progressBar(pct: number | null | undefined, width = 8): string {
-    if (pct === null || pct === undefined) return "—";
-    // Pi does not clamp `percent`, so an over-full context would otherwise
-    // produce a negative repeat count.
-    const clamped = Math.max(0, Math.min(100, pct));
-    const filled = Math.round((clamped / 100) * width);
-    const empty = width - filled;
-    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${formatPercent(pct)}`;
-  }
-
   render(width: number): string[] {
     const snap = this.snapshot();
     const theme = this.theme();
     // Advance the spinner frame on every render while a run is active.
     this.#frame += 1;
+
+    const model = this.#readModel();
     const branch = (() => {
       try {
         return this.footerCtx.gitBranch();
@@ -138,172 +102,103 @@ export class ForgeryFooter implements Component {
         return null;
       }
     })();
-    const usage = this.footerCtx.contextUsage();
+    const usage = (() => {
+      try {
+        return this.footerCtx.contextUsage();
+      } catch {
+        return null;
+      }
+    })();
     const pct = usage?.percent ?? null;
-    const tokens = usage?.tokens ?? null;
-    const tokensMax = usage?.contextWindow ?? null;
-    const model = this.footerCtx.modelId();
-    const effort = this.footerCtx.effort();
-    const cwd = this.footerCtx.cwd();
-    const compactCount = this.footerCtx.compactCount();
-    const compactMax = this.footerCtx.compactMax() ?? 5;
-    const issuesOpen = this.footerCtx.issuesOpen();
-    const issuesClosed = this.footerCtx.issuesClosed();
-    const prsOpen = this.footerCtx.prsOpen();
-    const prsClosed = this.footerCtx.prsClosed();
-    const ciStatus = this.footerCtx.ciStatus();
+    const effort = (() => {
+      try {
+        return this.footerCtx.effort();
+      } catch {
+        return null;
+      }
+    })();
 
     const active = snap.runs.find((r) => r.status === "running");
-    const st = snap.subgoalTotals;
 
-    // ── Segment 1: git branch ─────────────────────────────────────────
+    // ── Segment 1: model (short name) ─────────────────────────────────
+    const modelSeg = model
+      ? theme.fg("accent", shortModel(model, effort))
+      : theme.fg("dim", "no-model");
+
+    // ── Segment 2: git branch ─────────────────────────────────────────
     const branchSeg = branch
       ? theme.fg("muted", `⎇ ${safeText(branch)}`)
       : theme.fg("dim", "no-repo");
 
-    // ── Segment 2: context progress bar ──────────────────────────────
-    const ctxSeg = pct !== null
-      ? theme.fg(
-          "muted",
-          `ctx ${this.#progressBar(pct, 6)}${
-            tokens !== null ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}` : ""
-          }`,
-        )
-      : theme.fg("dim", "ctx —");
-
-    // ── Segment 3: model + effort ─────────────────────────────────────
-    const modelShort = model ? model.split("/").pop() ?? model : undefined;
-    const effortShort = effort
-      ? {
-          low: "lw",
-          medium: "med",
-          high: "hgh",
-        }[effort] ?? effort
-        : undefined;
-    const modelSeg =
-      modelShort || effort !== null
+    // ── Segment 3: context usage (percent only, no bar) ───────────────
+    const ctxSeg =
+      pct !== null
         ? theme.fg(
-            "dim",
-            `${modelShort ?? "?"}${effortShort ? ` (${effortShort})` : ""}`,
+            pct >= 85 ? "error" : "muted",
+            `ctx ${formatPercent(pct)}`,
           )
-        : undefined;
+        : theme.fg("dim", "ctx —");
 
-    // ── Segment 4: working directory (basename only) ─────────────────
-    const cwdSeg =
-      cwd
-        ? theme.fg("muted", `📁 ${safeText(basename(cwd))}`)
-        : undefined;
-
-    // ── Segment 5: compacts ──────────────────────────────────────────
-    const compactSeg =
-      compactCount !== null
-        ? theme.fg(
-            "muted",
-            `compacts ${compactCount}/${compactMax}${
-              compactCount >= (compactMax ?? 5) ? " handoff!" : ""
-            }`,
-          )
-        : undefined;
-
-    // ── Segment 6: CI status ─────────────────────────────────────────
-    const ciSeg =
-      ciStatus === "blocker" || ciStatus === "failed"
-        ? theme.fg("error", "CI ✗")
-        : ciStatus === "major" || ciStatus === "green"
-          ? theme.fg("success", "CI ✓")
-          : ciStatus === "nit" || ciStatus === "pending"
-            ? theme.fg("warning", "CI ◐")
-            : ciStatus
-              ? theme.fg("muted", `CI ${ciStatus}`)
-              : undefined;
-
-    // ── Segment 7: live run status ───────────────────────────────────
-    let runSeg: string;
+    // ── Segment 4: active run / agent with spinner ────────────────────
+    let runSeg: string | undefined;
     if (active) {
       const totals = snap.activeTotals;
-      const parts = statusLine([
-        `${theme.fg("accent", animatedStatusGlyph("running", this.#frame))} ${active.name}`,
-        totals ? `${totals.calls} calls` : undefined,
-        totals?.tokens ? `${formatTokens(totals.tokens)} tok` : undefined,
-        totals?.cost ? formatCost(totals.cost) : undefined,
-        formatDuration(snap.now - active.startedAt),
-      ]);
-      runSeg = parts;
+      const calls = totals ? ` · ${totals.calls} calls` : "";
+      const dur = active.startedAt ? ` · ${formatDuration(snap.now - active.startedAt)}` : "";
+      runSeg = `${theme.fg(
+        "accent",
+        animatedStatusGlyph("running", this.#frame),
+      )} ${theme.fg("text", theme.bold(active.name))}${calls}${dur}`;
     } else {
       const recent = snap.runs[0];
       if (recent) {
-        const dur =
-          recent.finishedAt && recent.startedAt
-            ? ` ${formatDuration(recent.finishedAt - recent.startedAt)}`
-            : "";
-        runSeg = `${colorStatus(theme, recent.status)} ${recent.name} ${recent.status}${dur}`;
+        runSeg = `${colorStatus(theme, recent.status)} ${recent.name} ${recent.status}`;
       } else {
         runSeg = theme.fg("dim", "idle");
       }
     }
 
-    // ── Segment 7b: subgoal progress ─────────────────────────────────
-    const subgoalSeg =
-      st?.total && st.total > 0
-        ? theme.fg(
-            "muted",
-            `subgoals ${st.completed}/${st.total}${
-              st.completed === st.total ? " ✓" : ""
-            }`,
-          )
-        : undefined;
-
-    // ── Segment 8: issues/PRs ────────────────────────────────────────
-    const issuesSeg =
-      issuesOpen !== null || issuesClosed !== null || prsOpen !== null || prsClosed !== null
-        ? theme.fg(
-            "muted",
-            `issues ${issuesOpen ?? "?"}/${issuesClosed ?? "?"} · PRs ${prsOpen ?? "?"}/${prsClosed ?? "?"}`,
-          )
-        : undefined;
-
-    // ── Assemble ─────────────────────────────────────────────────────
-    const partsLeft = [
-      branchSeg,
-      ctxSeg,
-      modelSeg,
-      cwdSeg,
-      compactSeg,
-      ciSeg,
-      subgoalSeg,
-      issuesSeg,
-    ].filter(Boolean);
-    const partsRight = [runSeg].filter(Boolean);
-
-    const singleLeft = partsLeft.join("  ·  ");
-    const singleRight = partsRight.join("  ·  ");
-    // Run/agent status (animated spinner) first — most visible above the input.
-    const single = `${singleRight}${singleLeft.length > 0 ? "  ·  " + singleLeft : ""}`;
+    // ── Assemble (always one line) ────────────────────────────────────
+    const parts = [modelSeg, branchSeg, ctxSeg, runSeg].filter(Boolean);
+    const single = parts.join("  ·  ");
     const fitted = truncateToWidth(single, width, "…");
-    // Wide enough for one line? Strip ANSI codes and stub-theme color tags
-    // to measure visible width.
-    const visibleLen = fitted
-      .replace(/\u001b\[[0-9;]*m/g, "")
-      .replace(/\[[a-z]+\]/g, "")
-      .length;
-    if (visibleLen <= width - 2 || width < 80) {
-      return [fitted];
-    }
+    return [fitted];
+  }
 
-    // Two-line layout: run status on top (above), context/meta at the bottom.
-    const line1 = partsRight.join("  ·  ");
-    const line2 = partsLeft.join("  ·  ");
-    return [
-      truncateToWidth(line1, width, "…"),
-      truncateToWidth(line2, width, "…"),
-    ];
+  /** Shorten a model id for display: "provider/model" → "model", drop effort tag. */
+  #readModel(): string | undefined {
+    try {
+      return this.footerCtx.modelId();
+    } catch {
+      return undefined;
+    }
   }
 }
 
-/** Return the basename of a path, or the input if it has no separator. */
-function basename(p: string): string {
-  const lastSlash = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-  return lastSlash === -1 ? p : p.slice(lastSlash + 1);
+/** Milliseconds → "3m12s", "45s", "1h20m", "—" when undefined. */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms < 0) return "—";
+  if (ms < 1000) return "<1s";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 > 0 ? `${m}m${s % 60}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return m % 60 > 0 ? `${h}h${m % 60}m` : `${h}h`;
+}
+
+/** "provider/model-name" → "model-name", with optional effort tag (lw/med/hgh). */
+function shortModel(modelId: string, effort: string | null | undefined): string {
+  const name = modelId.includes("/") ? modelId.split("/").pop() ?? modelId : modelId;
+  const effortTag =
+    effort === "low"
+      ? " (lw)"
+      : effort === "medium"
+        ? " (med)"
+        : effort === "high"
+          ? " (hgh)"
+          : "";
+  return `${name}${effortTag}`;
 }
 
 /**
