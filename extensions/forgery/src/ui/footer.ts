@@ -3,7 +3,11 @@
  *
  * A single compact line — never two — with just the essentials:
  *
- *   model · branch · ctx N% · [agent ◐]
+ *   model · branch · ctx [███░░░] N% · [agent ◐]
+ *
+ * The context bar colorizes at 50% (warning) and 85% (error). While a CI
+ * check is pending the model name is hidden to make room for CI status,
+ * then restores with a character-by-character reveal animation.
  *
  * Every value comes from the activity store or the live host context — no
  * fabricated telemetry. The controller also mirrors a compact status string
@@ -39,12 +43,14 @@ export interface ForgeryFooterContext {
   modelId: () => string | undefined;
   /** Thinking/effort level (Pi's ThinkingLevel), or null. */
   effort: () => string | null;
+  /** CI status: "pending" | "failed" | "green", or null. */
+  ciStatus: () => string | null;
 }
 
 /**
  * Claude Code–inspired status line: one compact line, essentials only.
  *
- * Segments: model · branch · ctx N% · [active agent with spinner].
+ * Segments: model · branch · ctx [bar] N% · [active agent with spinner].
  */
 export class ForgeryFooter implements Component {
   private theme: () => Theme;
@@ -52,6 +58,10 @@ export class ForgeryFooter implements Component {
   private footerCtx: ForgeryFooterContext;
   /** Frame counter used to animate the "working" spinner while a run is active. */
   #frame = 0;
+  /** Timestamp when CI entered "pending" (check in progress), null when not pending. */
+  #ciPendingSince: number | null = null;
+  /** Frame when CI restore animation started, null when not restoring. */
+  #ciRestoreFrame: number | null = null;
 
   constructor(theme: () => Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
     this.theme = theme;
@@ -88,6 +98,17 @@ export class ForgeryFooter implements Component {
     ]);
   }
 
+  /** Render a compact progress bar: "[████░░░░] 45%". Colorizes at 50% (warning) and 85% (error). */
+  #progressBar(pct: number, theme: Theme, width = 8): string {
+    // Pi does not clamp `percent`, so an over-full context would otherwise
+    // produce a negative repeat count.
+    const clamped = Math.max(0, Math.min(100, pct));
+    const filled = Math.round((clamped / 100) * width);
+    const empty = width - filled;
+    const color = clamped >= 85 ? "error" : clamped >= 50 ? "warning" : "muted";
+    return theme.fg(color, `[${"█".repeat(filled)}${"░".repeat(empty)}] ${formatPercent(clamped)}`);
+  }
+
   render(width: number): string[] {
     const snap = this.snapshot();
     const theme = this.theme();
@@ -110,6 +131,8 @@ export class ForgeryFooter implements Component {
       }
     })();
     const pct = usage?.percent ?? null;
+    const tokens = usage?.tokens ?? null;
+    const tokensMax = usage?.contextWindow ?? null;
     const effort = (() => {
       try {
         return this.footerCtx.effort();
@@ -118,28 +141,74 @@ export class ForgeryFooter implements Component {
       }
     })();
 
+    // Track CI check state so the model name can be hidden while a check runs,
+    // then restored with an animation once CI settles.
+    const ciStatus = (() => {
+      try {
+        return this.footerCtx.ciStatus();
+      } catch {
+        return null;
+      }
+    })();
+    if (ciStatus === "pending") {
+      if (this.#ciPendingSince === null) this.#ciPendingSince = Date.now();
+      this.#ciRestoreFrame = null;
+    } else if (this.#ciPendingSince !== null) {
+      // CI just left "pending" — start the restore animation.
+      if (this.#ciRestoreFrame === null) this.#ciRestoreFrame = this.#frame;
+      this.#ciPendingSince = null;
+    }
+    const ciChecking = this.#ciPendingSince !== null;
+    const restoreFrame = this.#ciRestoreFrame;
+    const restoring = restoreFrame !== null;
+    if (restoring && this.#frame - restoreFrame >= 30) {
+      // ~30 frames (~3 s at 10 fps) to fully restore the model name.
+      this.#ciRestoreFrame = null;
+    }
+    const showModel = !ciChecking;
+
     const active = snap.runs.find((r) => r.status === "running");
 
     // ── Segment 1: model (short name) ─────────────────────────────────
-    const modelSeg = model
-      ? theme.fg("accent", shortModel(model, effort))
-      : theme.fg("dim", "no-model");
+    let modelSeg: string | undefined;
+    if (showModel && model) {
+      let modelPart = shortModel(model, effort);
+      if (restoring) {
+        // Character-by-character reveal animation while CI settles.
+        const progress = Math.min(1, (this.#frame - (this.#ciRestoreFrame ?? 0)) / 30);
+        modelPart = modelPart.slice(0, Math.max(0, Math.floor(modelPart.length * progress)));
+      }
+      modelSeg = theme.fg("accent", modelPart);
+    } else if (!model) {
+      modelSeg = theme.fg("dim", "no-model");
+    }
 
     // ── Segment 2: git branch ─────────────────────────────────────────
     const branchSeg = branch
       ? theme.fg("muted", `⎇ ${safeText(branch)}`)
       : theme.fg("dim", "no-repo");
 
-    // ── Segment 3: context usage (percent only, no bar) ───────────────
+    // ── Segment 3: context usage (colorized bar) ──────────────────────
     const ctxSeg =
       pct !== null
-        ? theme.fg(
-            pct >= 85 ? "error" : "muted",
-            `ctx ${formatPercent(pct)}`,
-          )
+        ? theme.fg("muted", "ctx ") +
+          this.#progressBar(pct, theme, 6) +
+          (tokens !== null ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}` : "")
         : theme.fg("dim", "ctx —");
 
-    // ── Segment 4: active run / agent with spinner ────────────────────
+    // ── Segment 4: CI status (shown only while a check runs) ─────────
+    const ciSeg =
+      ciStatus === "pending"
+        ? theme.fg("warning", "CI ◐")
+        : ciStatus === "failed" || ciStatus === "blocker"
+          ? theme.fg("error", "CI ✗")
+          : ciStatus === "green" || ciStatus === "major"
+            ? theme.fg("success", "CI ✓")
+            : ciStatus
+              ? theme.fg("muted", `CI ${ciStatus}`)
+              : undefined;
+
+    // ── Segment 5: active run / agent with spinner ────────────────────
     let runSeg: string | undefined;
     if (active) {
       const totals = snap.activeTotals;
@@ -159,7 +228,7 @@ export class ForgeryFooter implements Component {
     }
 
     // ── Assemble (always one line) ────────────────────────────────────
-    const parts = [modelSeg, branchSeg, ctxSeg, runSeg].filter(Boolean);
+    const parts = [modelSeg, branchSeg, ctxSeg, ciSeg, runSeg].filter(Boolean);
     const single = parts.join("  ·  ");
     const fitted = truncateToWidth(single, width, "…");
     return [fitted];

@@ -344,6 +344,7 @@ export class ForgeryUiController {
       contextUsage: () => this.contextUsageReader.get(),
       modelId: () => this.#read((c) => c.model?.id),
       effort: () => this.#read((c) => c.thinkingLevel) ?? null,
+      ciStatus: () => this.githubStats.ciStatus(),
     };
     this.footer = new ForgeryFooter(() => this.ui!.theme, () => this.store.snapshot(), footerCtx);
     // Mount: setFooter takes a factory `(tui, theme, footerData) => Component`.
