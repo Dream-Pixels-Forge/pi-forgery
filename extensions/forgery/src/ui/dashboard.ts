@@ -169,21 +169,23 @@ export class ForgeryDashboard implements Component, Focusable {
       });
     }
 
-    // Entity list (agents).
+    // Entity list (agents) — rendered as a parent→child tree so subagents nest under their parent.
     const entities = this.#filteredAgents(snap.agents, this.filter);
+    const tree = this.#buildAgentTree(entities);
     lines.push("");
     lines.push(theme.fg("muted", `agents (${entities.length}) · filter: ${this.filter}`));
-    entities.forEach((agent, i) => {
+    tree.forEach(({ agent, depth }, i) => {
       const isFocused = i === this.entityIndex;
       const prefix = isFocused ? ">" : " ";
       const glyph = colorStatus(theme, agent.status);
+      const indent = depth > 0 ? `${"  ".repeat(depth)}└─ ` : "";
       const tail = [
         agent.current ? ` ${theme.fg("dim", truncate(agent.current, 28))}` : "",
         agent.usage?.cost ? ` ${formatCost(agent.usage.cost)}` : "",
         agent.finishedAt ? ` ${formatDuration(snap.now - agent.startedAt)}` : "",
       ].join("");
       lines.push(
-        `${prefix} ${glyph} ${theme.fg("text", theme.bold(agent.name))}${theme.fg("dim", ` · ${agent.status}`)}${tail}`,
+        `${prefix} ${indent}${glyph} ${theme.fg("text", theme.bold(agent.name))}${theme.fg("dim", ` · ${agent.status}`)}${tail}`,
       );
     });
 
@@ -252,6 +254,32 @@ export class ForgeryDashboard implements Component, Focusable {
       default:
         return agents;
     }
+  }
+
+  /** Build a depth-first agent tree from a flat list, using parentId for nesting. */
+  #buildAgentTree(
+    agents: ForgeryAgentRecord[],
+  ): { agent: ForgeryAgentRecord; depth: number }[] {
+    const byId = new Map(agents.map((a) => [a.id, a]));
+    const children = new Map<string, ForgeryAgentRecord[]>();
+    const roots: ForgeryAgentRecord[] = [];
+    for (const a of agents) {
+      if (a.parentId && byId.has(a.parentId)) {
+        const kids = children.get(a.parentId) ?? [];
+        kids.push(a);
+        children.set(a.parentId, kids);
+      } else {
+        roots.push(a);
+      }
+    }
+    const result: { agent: ForgeryAgentRecord; depth: number }[] = [];
+    const visit = (agent: ForgeryAgentRecord, depth: number): void => {
+      result.push({ agent, depth });
+      const kids = children.get(agent.id) ?? [];
+      for (const kid of kids) visit(kid, depth + 1);
+    };
+    for (const root of roots) visit(root, 0);
+    return result;
   }
 
   #pad(lines: string[], width: number, maxRows: number): string[] {

@@ -87,7 +87,7 @@ import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
 import { createResolver } from "../workflow/resolver";
 import { showImage, showImages, showVideo, type ShowImageResult } from "./display";
-import { box, formatCallSummary, formatDuration } from "../ui/format";
+import { box, formatCallSummary, formatDuration, oneLine } from "../ui/format";
 
 const execFileAsync = promisify(execFile);
 
@@ -456,10 +456,11 @@ export function makeRegistry(
       const result = await runner.run({
         task,
         cwd: hctx.cwd,
-        name: "agent",
+        name: args.name ? String(args.name) : `agent · ${oneLine(task).slice(0, 32)}`,
         timeoutMs: args.timeoutMs ? Number(args.timeoutMs) : undefined,
         model: args.model ? String(args.model) : undefined,
         systemPrompt: args.systemPrompt ? String(args.systemPrompt) : undefined,
+        parentId: hctx.runId,
       });
       const agent = runner.get(result.id);
       if (agent) activity.addAgent(agent);
@@ -530,6 +531,7 @@ export function makeRegistry(
         allowedTools: args.allowedTools as EnhancedAgentRunRequest["allowedTools"],
         budget: args.budget as EnhancedAgentRunRequest["budget"],
         parentRunId: hctx.runId,
+        parentId: hctx.runId,
       };
 
       const result = await enhancedRunner.runEnhanced(req);
@@ -608,6 +610,7 @@ export function makeRegistry(
           outputSchema: args.outputSchema as EnhancedAgentRunRequest["outputSchema"],
           maxRetries: args.maxRetries ? Number(args.maxRetries) : undefined,
           parentRunId: hctx.runId,
+          parentId: hctx.runId,
         };
 
         const result = await enhancedRunner.runEnhanced(req);
@@ -654,6 +657,7 @@ export function makeRegistry(
         template: a.ref.replace("agents.", "") as EnhancedAgentRunRequest["template"],
         outputSchema: a.outputSchema as EnhancedAgentRunRequest["outputSchema"],
         parentRunId: hctx.runId,
+        parentId: hctx.runId,
       }));
 
       const results = await enhancedRunner.runParallel(requests);
@@ -696,6 +700,7 @@ export function makeRegistry(
         template: s.ref.replace("agents.", "") as EnhancedAgentRunRequest["template"],
         outputSchema: s.outputSchema as EnhancedAgentRunRequest["outputSchema"],
         parentRunId: hctx.runId,
+        parentId: hctx.runId,
       }));
 
       const results = await enhancedRunner.runPipeline(requests);
@@ -803,6 +808,7 @@ export function makeRegistry(
           cwd: hctx.cwd,
           template: templateMap[phaseName] as any,
           parentRunId: hctx.runId,
+          parentId: hctx.runId,
           name: `devloop-${phaseName}`,
           maxRetries: 2,
         });

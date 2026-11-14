@@ -203,21 +203,58 @@ export class ForgeryWidget implements Component, Focusable {
     frame: number,
   ): string[] {
     const rows: string[] = [];
-    // Active agents first, then running recent ones, then terminal.
-    const agents = snap.agents.filter((a) => a.status !== "completed" || a.current);
-    const agentRows = agents.slice(0, 3).map((a) => this.#agentRow(theme, a, width, frame));
+    // Build a parent→child tree so subagents render nested under their parent.
+    const tree = this.#buildAgentTree(snap.agents);
+    // Show only running/recent agents (top-level + their subagents), depth-first.
+    const visible = tree.filter(({ agent }) => agent.status !== "completed" || agent.current);
+    const agentRows = visible
+      .slice(0, max > 0 ? max : visible.length)
+      .map(({ agent, depth }) => this.#agentRow(theme, agent, width, frame, depth));
     rows.push(...agentRows);
     return rows.slice(0, max > 0 ? max : rows.length);
   }
 
-  #agentRow(theme: Theme, agent: ForgeryAgentRecord, width: number, frame: number): string {
+  /** Build a depth-first agent tree from the flat agent list, using parentId. */
+  #buildAgentTree(
+    agents: ForgeryAgentRecord[],
+  ): { agent: ForgeryAgentRecord; depth: number }[] {
+    const byId = new Map(agents.map((a) => [a.id, a]));
+    const children = new Map<string, ForgeryAgentRecord[]>();
+    const roots: ForgeryAgentRecord[] = [];
+    for (const a of agents) {
+      if (a.parentId && byId.has(a.parentId)) {
+        const kids = children.get(a.parentId) ?? [];
+        kids.push(a);
+        children.set(a.parentId, kids);
+      } else {
+        roots.push(a);
+      }
+    }
+    const result: { agent: ForgeryAgentRecord; depth: number }[] = [];
+    const visit = (agent: ForgeryAgentRecord, depth: number): void => {
+      result.push({ agent, depth });
+      const kids = children.get(agent.id) ?? [];
+      for (const kid of kids) visit(kid, depth + 1);
+    };
+    for (const root of roots) visit(root, 0);
+    return result;
+  }
+
+  #agentRow(
+    theme: Theme,
+    agent: ForgeryAgentRecord,
+    width: number,
+    frame: number,
+    depth: number,
+  ): string {
     // Running agents get the animated spinner; everything else keeps a static glyph.
     const glyph =
       agent.status === "running"
         ? theme.fg("accent", animatedStatusGlyph("running", frame))
         : colorStatus(theme, agent.status);
+    const indent = depth > 0 ? `${"  ".repeat(depth - 1)}└─ ` : "";
     const current = agent.current ? ` ${theme.fg("dim", truncate(agent.current, 40))}` : "";
-    const line = `  ${glyph} ${theme.fg("text", theme.bold(agent.name))}${current}`;
+    const line = `  ${indent}${glyph} ${theme.fg("text", theme.bold(agent.name))}${current}`;
     return truncateToWidth(line, width, "…");
   }
 

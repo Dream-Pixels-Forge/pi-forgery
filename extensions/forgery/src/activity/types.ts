@@ -157,6 +157,8 @@ export interface ForgeryAgentRecord {
     | "stopped"
     | "timed_out"
     | "unavailable";
+  /** Parent agent id, if this agent was spawned by another agent (subagent). */
+  parentId?: string;
   /** Short headline of the agent's current tool or terminal result. */
   current?: string;
   turns?: number;

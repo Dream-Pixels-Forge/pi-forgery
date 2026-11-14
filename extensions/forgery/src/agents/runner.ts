@@ -25,6 +25,8 @@ export interface AgentRunRequest {
   systemPrompt?: string;
   /** Name of the agent for the activity widget. */
   name?: string;
+  /** Parent agent id, if this agent is a subagent of another agent. */
+  parentId?: string;
 }
 
 export interface AgentRunResult {
@@ -88,6 +90,7 @@ export class AgentRunner {
       status: "queued",
       startedAt,
       updatedAt: startedAt,
+      parentId: req.parentId,
     };
     this.agents.set(id, agent);
     this.notify();

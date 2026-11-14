@@ -77,6 +77,7 @@ export interface EnhancedAgentRunRequest {
   allowedTools?: string[];                     // Tools the agent can call (default: all)
   budget?: CostBudget;
   parentRunId?: string;                        // Parent forgery_exec run for context
+  parentId?: string;                           // Parent agent id, if this is a subagent
   previousOutput?: string;                     // Previous attempt output for retry
   previousFeedback?: string;                   // Feedback for retry
 }
@@ -1087,6 +1088,7 @@ export class EnhancedAgentRunner {
         timeoutMs: req.timeoutMs,
         systemPrompt,
         name: req.name ?? `enhanced-${req.template ?? "general"}`,
+        parentId: req.parentId,
       });
 
       // Record cost if usage available
