@@ -190,7 +190,10 @@ export class ForgeryUiController {
     // where a readout can change without Pi rendering on its own.
     const live =
       snap.runs.some((r) => r.status === "running") ||
-      snap.agents.some((a) => a.status === "running");
+      snap.agents.some((a) => a.status === "running") ||
+      snap.runs.some((r) =>
+        r.subgoals.some((s) => s.status === "running" || s.status === "blocked"),
+      );
     if (!live) return;
     this.ui.setStatus(STATUS_KEY, this.#statusString(snap) || undefined);
   }
@@ -283,6 +286,11 @@ export class ForgeryUiController {
       else this.store.updateAgent(agent.id, agent);
     }
   }
+
+  /** Note: subgoals are owned by the forgery_exec program via host calls
+   *  (subgoals.create/update/finish). The controller only reads them from the
+   *  store snapshot — no separate sync source exists for subgoals.
+   */
 
   #mountWidget(ctx: ExtensionContext): void {
     if (!this.options.widget || !this.ui) return;
@@ -384,14 +392,17 @@ export class ForgeryUiController {
       return "";
     }
     const totals = snap.activeTotals;
-    return [
+    const parts = [
       `${animatedStatusGlyph("running", this.#frame)} ${active.name}`,
       totals ? `${totals.calls} calls` : undefined,
       totals?.tokens ? formatTokens(totals.tokens) : undefined,
       totals?.cost ? formatCost(totals.cost) : undefined,
       formatDuration(snap.now - active.startedAt),
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    ];
+    const st = snap.subgoalTotals;
+    if (st && st.total > 0) {
+      parts.push(`subgoals ${st.completed}/${st.total}`);
+    }
+    return parts.filter(Boolean).join(" · ");
   }
 }

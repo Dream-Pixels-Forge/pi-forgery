@@ -129,6 +129,8 @@ export interface ForgeryRun {
   calls: ForgeryCall[];
   items: ForgeryItem[];
   events: ForgeryEvent[];
+  /** Subgoals belonging to this run/goal. */
+  subgoals: ForgerySubgoal[];
   currentPhaseId?: string;
   startedAt: number;
   updatedAt: number;
@@ -168,6 +170,58 @@ export interface ForgeryAgentRecord {
   finishedAt?: number;
 }
 
+/** Lifecycle status of a subgoal within a goal/run. */
+export type ForgerySubgoalStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked";
+
+/** A subgoal — a decomposable unit of work inside a forgery_exec goal/run. */
+export interface ForgerySubgoal {
+  id: string;
+  /** Parent goal/run id this subgoal belongs to. */
+  goalId: string;
+  /** Optional parent subgoal id for nesting. */
+  parentSubgoalId?: string;
+  name: string;
+  description?: string;
+  /** Acceptance criteria — subgoal is "done" only when all are met. */
+  acceptanceCriteria?: string[];
+  status: ForgerySubgoalStatus;
+  /** Headline of the current tool/step being worked on. */
+  current?: string;
+  /** Expected number of steps/items (for progress "completed/total"). */
+  total?: number;
+  /** Steps/items completed so far. */
+  completed?: number;
+  /** Structured output produced by the subgoal (if any). */
+  output?: unknown;
+  error?: string;
+  /** Token/cost attribution for this subgoal. */
+  usage?: { input?: number; output?: number; cost?: number };
+  startedAt?: number;
+  updatedAt: number;
+  finishedAt?: number;
+}
+
+/** Input to create or update a subgoal. */
+export interface ForgerySubgoalInput {
+  goalId: string;
+  parentSubgoalId?: string;
+  name: string;
+  description?: string;
+  acceptanceCriteria?: string[];
+  status?: ForgerySubgoalStatus;
+  current?: string;
+  total?: number;
+  completed?: number;
+  output?: unknown;
+  error?: string;
+  usage?: { input?: number; output?: number; cost?: number };
+}
+
 /** Read-only view of the whole activity surface. `now` is the live clock. */
 export interface ForgerySnapshot {
   now: number;
@@ -183,4 +237,6 @@ export interface ForgerySnapshot {
     calls: number;
     startedAt?: number;
   };
+  /** Aggregate subgoal counts across active runs: { completed, total }. */
+  subgoalTotals?: { completed: number; total: number };
 }

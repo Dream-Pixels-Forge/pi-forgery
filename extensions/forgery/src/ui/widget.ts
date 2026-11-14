@@ -12,7 +12,7 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { ForgeryAgentRecord, ForgerySnapshot } from "../activity/types";
+import type { ForgeryAgentRecord, ForgerySnapshot, ForgerySubgoal } from "../activity/types";
 import {
   animatedStatusGlyph,
   colorSafe,
@@ -142,8 +142,11 @@ export class ForgeryWidget implements Component, Focusable {
     // Header line.
     const header = this.#headerLine(theme, snap, active, width, this.#frame);
 
-    // Participant rows.
+    // Participant rows (active agents).
     const agents = this.#participantRows(theme, snap, width, Math.max(0, maxRows - 1 - (this.expandedId ? 0 : 0)), this.#frame);
+
+    // Subgoal rows (subgoals of the active run).
+    const subgoals = this.#subgoalRows(theme, snap, active, width, this.#frame);
 
     // Expanded transcript pane.
     if (this.expandedId) {
@@ -153,13 +156,13 @@ export class ForgeryWidget implements Component, Focusable {
         const body = lines.slice(0, FORGERY_WIDGET_ACTIVITY_ROWS).map((l) => truncateToWidth(l, width));
         const pad = Math.max(0, FORGERY_WIDGET_ACTIVITY_ROWS - body.length);
         const withPadding = [...body, ...Array(pad).fill("")];
-        this.#lastRows = 1 + agents.length + 1 + withPadding.length + 1;
-        return [header, ...agents, divider, ...withPadding, theme.fg("border", "─".repeat(width))];
+        this.#lastRows = 1 + agents.length + subgoals.length + 1 + withPadding.length + 1;
+        return [header, ...agents, ...subgoals, divider, ...withPadding, theme.fg("border", "─".repeat(width))];
       }
     }
 
-    this.#lastRows = 1 + agents.length;
-    return [header, ...agents];
+    this.#lastRows = 1 + agents.length + subgoals.length;
+    return [header, ...agents, ...subgoals];
   }
 
   // ── render pieces ──────────────────────────────────────────────────────
@@ -216,5 +219,37 @@ export class ForgeryWidget implements Component, Focusable {
     const current = agent.current ? ` ${theme.fg("dim", truncate(agent.current, 40))}` : "";
     const line = `  ${glyph} ${theme.fg("text", theme.bold(agent.name))}${current}`;
     return truncateToWidth(line, width, "…");
+  }
+
+  /** Subgoal rows for the active run — name + status glyph + completed/total. */
+  #subgoalRows(
+    theme: Theme,
+    snap: ForgerySnapshot,
+    active: { subgoals: ForgerySubgoal[] },
+    width: number,
+    frame: number,
+  ): string[] {
+    const rows: string[] = [];
+    const subgoals = active.subgoals?.slice(0, 3) ?? [];
+    for (const s of subgoals) {
+      const glyph =
+        s.status === "running"
+          ? theme.fg("accent", animatedStatusGlyph("running", frame))
+          : s.status === "completed"
+            ? theme.fg("success", "✓")
+            : s.status === "failed"
+              ? theme.fg("error", "✗")
+              : s.status === "blocked"
+                ? theme.fg("warning", "◐")
+                : colorStatus(theme, s.status);
+      const progress =
+        s.total !== undefined && s.completed !== undefined
+          ? ` ${theme.fg("dim", `${s.completed}/${s.total}`)}`
+          : "";
+      const current = s.current ? ` ${theme.fg("dim", truncate(s.current, 32))}` : "";
+      const line = `  ${glyph} ${theme.fg("text", theme.bold(s.name))}${progress}${current}`;
+      rows.push(truncateToWidth(line, width, "…"));
+    }
+    return rows;
   }
 }

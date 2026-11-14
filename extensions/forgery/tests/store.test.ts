@@ -9,6 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ForgeryActivityStore } from "../src/activity/store.js";
+import type { ForgerySubgoalInput } from "../src/activity/types.js";
 
 test("store: start + finish a run", () => {
   const store = new ForgeryActivityStore();
@@ -173,4 +174,102 @@ test("store: compact bumps the revision", () => {
   const before = store.revision();
   store.compact("run-1");
   assert.ok(store.revision() > before);
+});
+
+test("store: subgoal create + update + finish", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+
+  const sg = store.subgoal({
+    goalId: "run-1",
+    name: "add auth",
+    status: "running",
+    total: 5,
+    completed: 1,
+  });
+  assert.equal(sg.name, "add auth");
+  assert.equal(sg.status, "running");
+  assert.equal(sg.total, 5);
+  assert.equal(sg.completed, 1);
+  assert.ok(sg.id);
+  assert.ok(sg.startedAt);
+
+  // Update progress.
+  const updated = store.updateSubgoal(sg.id, { completed: 3, current: "writing tests" });
+  assert.ok(updated);
+  assert.equal(updated!.completed, 3);
+  assert.equal(updated!.current, "writing tests");
+
+  // Finish.
+  const finished = store.finishSubgoal(sg.id, true);
+  assert.ok(finished);
+  assert.equal(finished!.status, "completed");
+  assert.ok(finished!.finishedAt);
+});
+
+test("store: subgoals appear in run.subgoals and snapshot", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+
+  store.subgoal({ goalId: "run-1", name: "research" });
+  store.subgoal({ goalId: "run-1", name: "implement" });
+  store.subgoal({ goalId: "run-1", name: "review" });
+
+  const run = store.get("run-1")!;
+  assert.equal(run.subgoals.length, 3);
+
+  const snap = store.snapshot();
+  assert.equal(snap.subgoalTotals?.total, 3);
+  assert.equal(snap.subgoalTotals?.completed, 0);
+
+  store.finishSubgoal(run.subgoals[0].id, true);
+  const snap2 = store.snapshot();
+  assert.equal(snap2.subgoalTotals!.completed, 1);
+  assert.equal(snap2.subgoalTotals!.total, 3);
+});
+
+test("store: subgoalsForGoal filters by goal id", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+  store.start("run-2");
+
+  store.subgoal({ goalId: "run-1", name: "sg-a" });
+  store.subgoal({ goalId: "run-2", name: "sg-b" });
+
+  assert.equal(store.subgoalsForGoal("run-1").length, 1);
+  assert.equal(store.subgoalsForGoal("run-1")[0].name, "sg-a");
+  assert.equal(store.subgoalsForGoal("run-2").length, 1);
+  assert.equal(store.subgoalsForGoal("run-2")[0].name, "sg-b");
+  assert.equal(store.subgoalsForGoal("unknown").length, 0);
+});
+
+test("store: subgoal by id lookup", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+  const sg = store.subgoal({ goalId: "run-1", name: "lookup me" });
+  const found = store.subgoalById(sg.id);
+  assert.ok(found);
+  assert.equal(found!.name, "lookup me");
+  assert.equal(store.subgoalById("nope"), undefined);
+});
+
+test("store: subgoal finish cascades error", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+  const sg = store.subgoal({ goalId: "run-1", name: "failing" });
+  const finished = store.finishSubgoal(sg.id, false, "boom");
+  assert.ok(finished);
+  assert.equal(finished!.status, "failed");
+  assert.equal(finished!.error, "boom");
+});
+
+test("store: subgoal revision bumps on mutation", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1");
+  const before = store.revision();
+  store.subgoal({ goalId: "run-1", name: "sg" });
+  assert.ok(store.revision() > before);
+  const sgId = store.subgoalsForGoal("run-1")[0].id;
+  store.updateSubgoal(sgId, { status: "running" });
+  assert.ok(store.revision() > before + 1);
 });

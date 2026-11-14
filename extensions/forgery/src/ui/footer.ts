@@ -154,6 +154,7 @@ export class ForgeryFooter implements Component {
     const ciStatus = this.footerCtx.ciStatus();
 
     const active = snap.runs.find((r) => r.status === "running");
+    const st = snap.subgoalTotals;
 
     // ── Segment 1: git branch ─────────────────────────────────────────
     const branchSeg = branch
@@ -241,6 +242,17 @@ export class ForgeryFooter implements Component {
       }
     }
 
+    // ── Segment 7b: subgoal progress ─────────────────────────────────
+    const subgoalSeg =
+      st?.total && st.total > 0
+        ? theme.fg(
+            "muted",
+            `subgoals ${st.completed}/${st.total}${
+              st.completed === st.total ? " ✓" : ""
+            }`,
+          )
+        : undefined;
+
     // ── Segment 8: issues/PRs ────────────────────────────────────────
     const issuesSeg =
       issuesOpen !== null || issuesClosed !== null || prsOpen !== null || prsClosed !== null
@@ -251,9 +263,16 @@ export class ForgeryFooter implements Component {
         : undefined;
 
     // ── Assemble ─────────────────────────────────────────────────────
-    const partsLeft = [branchSeg, ctxSeg, modelSeg, cwdSeg, compactSeg, ciSeg, issuesSeg].filter(
-      Boolean,
-    );
+    const partsLeft = [
+      branchSeg,
+      ctxSeg,
+      modelSeg,
+      cwdSeg,
+      compactSeg,
+      ciSeg,
+      subgoalSeg,
+      issuesSeg,
+    ].filter(Boolean);
     const partsRight = [runSeg].filter(Boolean);
 
     const singleLeft = partsLeft.join("  ·  ");

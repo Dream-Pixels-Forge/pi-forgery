@@ -12,7 +12,12 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, KeybindingsManager, TUI } from "@earendil-works/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ForgeryAgentRecord, ForgeryRun, ForgerySnapshot } from "../activity/types";
+import type {
+  ForgeryAgentRecord,
+  ForgeryRun,
+  ForgerySnapshot,
+  ForgerySubgoal,
+} from "../activity/types";
 import {
   colorSafe,
   colorStatus,
@@ -181,6 +186,38 @@ export class ForgeryDashboard implements Component, Focusable {
         `${prefix} ${glyph} ${theme.fg("text", theme.bold(agent.name))}${theme.fg("dim", ` · ${agent.status}`)}${tail}`,
       );
     });
+
+    // Subgoal list (subgoals of the focused run).
+    const focusSubgoals = focus?.subgoals ?? [];
+    if (focusSubgoals.length > 0) {
+      lines.push("");
+      lines.push(
+        theme.fg(
+          "muted",
+          `subgoals (${focusSubgoals.filter((s) => s.status === "completed").length}/${focusSubgoals.length})`,
+        ),
+      );
+      focusSubgoals.slice(0, 10).forEach((subgoal) => {
+        const glyph =
+          subgoal.status === "completed"
+            ? theme.fg("success", "✓")
+            : subgoal.status === "failed"
+              ? theme.fg("error", "✗")
+              : subgoal.status === "blocked"
+                ? theme.fg("warning", "◐")
+                : subgoal.status === "running"
+                  ? theme.fg("accent", "⟳")
+                  : theme.fg("dim", "○");
+        const progress =
+          subgoal.total !== undefined && subgoal.completed !== undefined
+            ? ` ${theme.fg("dim", `${subgoal.completed}/${subgoal.total}`)}`
+            : "";
+        const current = subgoal.current ? ` ${theme.fg("dim", truncate(subgoal.current, 28))}` : "";
+        lines.push(
+          `    ${glyph} ${theme.fg("text", theme.bold(subgoal.name))}${theme.fg("dim", ` · ${subgoal.status}`)}${progress}${current}`,
+        );
+      });
+    }
 
     return this.#pad(lines, width, 24);
   }
