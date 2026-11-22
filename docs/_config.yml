@@ -7,7 +7,7 @@ description: >-
   image/video display, and a /forgery dashboard — all driven by a single
   in-memory activity snapshot.
 url: https://dream-pixels-forge.github.io
-baseurl: /pi-forgery/docs
+baseurl: /pi-forgery
 
 theme: jekyll-theme-cayman
 
@@ -27,7 +27,7 @@ defaults:
       path: ""
       type: "pages"
     values:
-      layout: "page"
+      layout: "default"
 
 exclude:
   - Gemfile
