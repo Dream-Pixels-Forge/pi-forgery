@@ -1,6 +1,6 @@
 # SG-17 — Dashboard: height-aware layout & scrolling
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/dashboard.ts`
 

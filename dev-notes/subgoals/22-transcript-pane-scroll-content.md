@@ -1,6 +1,6 @@
 # SG-22 — Wrapped, scrollable agent transcript pane
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P2
 - **Area:** `extensions/forgery/src/ui/controller.ts`, `extensions/forgery/src/ui/dashboard.ts`
 

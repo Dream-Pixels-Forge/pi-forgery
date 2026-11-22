@@ -461,6 +461,7 @@ export function makeRegistry(
         model: args.model ? String(args.model) : undefined,
         systemPrompt: args.systemPrompt ? String(args.systemPrompt) : undefined,
         parentId: hctx.runId,
+        runId: hctx.runId,
       });
       const agent = runner.get(result.id);
       if (agent) activity.addAgent(agent);

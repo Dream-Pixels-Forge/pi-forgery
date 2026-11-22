@@ -308,8 +308,8 @@ export class ForgeryUiController {
         const lines: string[] = [];
         lines.push(`  ${agent.name} · ${agent.status}`);
         if (agent.current) lines.push(`    ${agent.current}`);
-        if (agent.text) lines.push(`    ${agent.text.slice(0, 120)}`);
-        if (agent.error) lines.push(`    ✗ ${agent.error}`);
+        if (agent.text) lines.push(agent.text);
+        if (agent.error) lines.push(`  ✗ ${agent.error}`);
         return lines;
       },
       release: () => {

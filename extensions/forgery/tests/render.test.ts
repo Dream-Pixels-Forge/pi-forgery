@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { ForgeryFooter, type ForgeryFooterContext } from "../src/ui/footer.js";
 import { ForgeryWidget, type ForgeryWidgetInteraction } from "../src/ui/widget.js";
 import { ForgeryDashboard } from "../src/ui/dashboard.js";
-import { ForgeryActivityStore, type ForgeryAgentRecord } from "../src/activity/store.js";
+import { ForgeryActivityStore, type ForgeryAgentRecord, type ForgeryEvent } from "../src/activity/store.js";
 /** A minimal Theme stub that emits real ANSI so `visibleWidth`/`vw` strip it correctly. */
 const ANSI: Record<string, string> = {
   accent: "32",
@@ -557,7 +557,8 @@ test("ForgeryDashboard: ? opens help overlay, any key closes", () => {
 test("ForgeryDashboard: help bar present in activity view", () => {
   const { dash } = dashboardWithRuns(["run-a"]);
   const lines = dash.render(120);
-  assert.ok(lines.some((l) => l.includes("next run") || l.includes("prev run")), "help bar rendered");
+  assert.ok(lines.some((l) => l.includes("run-a")), "tab bar shows run name");
+  assert.ok(lines.some((l) => l.includes("›")), "tab bar shows tab glyphs");
 });
 
 // ── SG-18: dashboard agent table with aligned columns & frozen durations ──
@@ -595,6 +596,7 @@ test("ForgeryDashboard: agent table shows aligned columns and frozen durations",
       usage: { input: 1000, output: 12_345, cost: 0.42 },
       current: "reading src/auth.ts",
       updatedAt: started + 60_000,
+      runId: "run-1",
     },
     {
       id: "a-2",
@@ -607,6 +609,7 @@ test("ForgeryDashboard: agent table shows aligned columns and frozen durations",
       usage: { input: 500, output: 8_100, cost: 0.12 },
       current: "writing files",
       updatedAt: started,
+      runId: "run-1",
     },
   ]);
   dash.render(200);
@@ -813,4 +816,203 @@ test("ForgeryWidget: render returns cached lines when not dirty", () => {
   const first = widget.render(120);
   const second = widget.render(120);
   assert.equal(first, second, "same reference when not dirty");
+});
+
+// ── SG-22: widget transcript pane ───────────────────────────────────────
+
+function dashboardWithLongAgent(): { dash: ForgeryDashboard; store: ForgeryActivityStore } {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.addAgent({
+    id: "a-1",
+    name: "coder",
+    task: "writing code",
+    status: "running",
+    runId: "run-1",
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    text: "A".repeat(2000),
+  });
+  const dash = new ForgeryDashboard(
+    { requestRender: () => {} },
+    stubTheme(),
+    {} as never,
+    {
+      snapshot: () => store.snapshot(),
+      done: () => {},
+      hostCalls: ["pi.read"],
+      agentConfig: { maxConcurrent: 4, piBinary: "pi" },
+    },
+  );
+  return { dash, store };
+}
+
+test("ForgeryDashboard: agent table renders within width 60", () => {
+  const { dash } = dashboardWithLongAgent();
+  const lines = dash.render(60);
+  // All lines should be within width (visible width, ANSI stripped)
+  for (const line of lines) {
+    assert.ok(cleanWidth(line).length <= 60, `line too wide: ${cleanWidth(line).length} > 60: ${cleanWidth(line)}`);
+  }
+  // Agent names should be visible
+  assert.ok(lines.some((l) => l.includes("coder")), "agent name shown");
+});
+
+test("ForgeryDashboard: widget expanded pane scrolls long agent text", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.addAgent({
+    id: "a-1",
+    name: "coder",
+    task: "writing code",
+    status: "running",
+    runId: "run-1",
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+    text: "A".repeat(2000),
+  });
+  const widget = new ForgeryWidget(() => stubTheme(), () => store.snapshot(), 8);
+  widget.render(60); // prime render
+  widget.handleInput("j"); // select run header
+  widget.handleInput("j"); // select agent
+  widget.handleInput("\r"); // expand agent
+  const firstRender = widget.render(60);
+  const firstText = firstRender.join("\n");
+  assert.ok(firstText.includes("coder"), "agent name shown in expanded pane");
+  // The long text should be wrapped
+  const longLines = firstRender.filter((l) => l.includes("A".repeat(10)));
+  assert.ok(longLines.length > 0, "long text should be wrapped into visible lines");
+  // Scroll down
+  widget.handleInput("\u001b[6~"); // PgDn
+  const scrolledRender = widget.render(60);
+  const scrolledText = scrolledRender.join("\n");
+  // Scrolled content should be different from first render
+  assert.ok(scrolledText.length > 0, "scrolled output should have content");
+});
+
+// ── SG-19: dashboard events timeline & items ──────────────────────────
+
+function dashboardWithEvents(): { dash: ForgeryDashboard; store: ForgeryActivityStore } {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  const now = Date.now();
+  store.event("run-1", {
+    id: "e-1",
+    message: "phase plan → execute",
+    level: "info",
+    createdAt: now - 10_000,
+  });
+  store.event("run-1", {
+    id: "e-2",
+    message: "compaction ctx 86% → 41%",
+    level: "warning",
+    createdAt: now - 5_000,
+  });
+  store.event("run-1", {
+    id: "e-3",
+    message: "agent coder failed",
+    level: "error",
+    createdAt: now - 2_000,
+  });
+  store.item("run-1", {
+    id: "i-1",
+    label: "src/auth.ts",
+    status: "completed",
+    kind: "tool",
+    updatedAt: now - 1_000,
+  });
+  store.item("run-1", {
+    id: "i-2",
+    label: "src/main.ts",
+    status: "completed",
+    kind: "tool",
+    updatedAt: now - 500,
+  });
+  const dash = new ForgeryDashboard(
+    { requestRender: () => {} },
+    stubTheme(),
+    {} as never,
+    {
+      snapshot: () => store.snapshot(),
+      done: () => {},
+      hostCalls: ["pi.read"],
+      agentConfig: { maxConcurrent: 4, piBinary: "pi" },
+    },
+  );
+  return { dash, store };
+}
+
+test("ForgeryDashboard: events timeline shows every event kind glyph", () => {
+  const { dash } = dashboardWithEvents();
+  const out = dash.render(200).join("\n");
+  assert.ok(out.includes("events"), "events section rendered");
+  assert.ok(out.includes("✗"), "error event uses ✗ glyph");
+  assert.ok(out.includes("✓"), "success event uses ✓ glyph");
+  assert.ok(out.includes("⚠"), "warning event uses ⚠ glyph");
+  assert.ok(out.includes("▸"), "info event uses ▸ glyph");
+  assert.ok(out.includes("agent coder failed"), "error message shown");
+  assert.ok(out.includes("compaction ctx 86% → 41%"), "warning message shown");
+  assert.ok(out.includes("phase plan → execute"), "info message shown");
+});
+
+test("ForgeryDashboard: items pane renders when items present", () => {
+  const { dash } = dashboardWithEvents();
+  const out = dash.render(200).join("\n");
+  assert.ok(out.includes("items"), "items section rendered");
+  assert.ok(out.includes("src/auth.ts"), "item label shown");
+  assert.ok(out.includes("src/main.ts"), "second item label shown");
+});
+
+test("ForgeryDashboard: items pane hidden when no items", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.event("run-1", {
+    id: "e-1",
+    message: "test event",
+    level: "info",
+    createdAt: Date.now(),
+  });
+  const dash = new ForgeryDashboard(
+    { requestRender: () => {} },
+    stubTheme(),
+    {} as never,
+    {
+      snapshot: () => store.snapshot(),
+      done: () => {},
+      hostCalls: ["pi.read"],
+      agentConfig: { maxConcurrent: 4, piBinary: "pi" },
+    },
+  );
+  const out = dash.render(200).join("\n");
+  assert.ok(!out.includes("items"), "items section hidden when empty");
+});
+
+test("ForgeryDashboard: event filter cycles all → errors → agents → phases", () => {
+  const { dash } = dashboardWithEvents();
+  dash.render(120);
+  assert.equal((dash as any).eventFilter, "all", "starts at all filter");
+
+  dash.handleInput("f");
+  assert.equal((dash as any).eventFilter, "errors", "f → errors filter");
+
+  dash.handleInput("f");
+  assert.equal((dash as any).eventFilter, "agents", "f → agents filter");
+
+  dash.handleInput("f");
+  assert.equal((dash as any).eventFilter, "phases", "f → phases filter");
+
+  dash.handleInput("f");
+  assert.equal((dash as any).eventFilter, "all", "f wraps to all filter");
+});
+
+test("ForgeryDashboard: relative time toggle", () => {
+  const { dash } = dashboardWithEvents();
+  dash.render(120);
+  assert.equal((dash as any).relativeTime, false, "starts at absolute time");
+
+  dash.handleInput("t");
+  assert.equal((dash as any).relativeTime, true, "t toggles relative time on");
+
+  dash.handleInput("t");
+  assert.equal((dash as any).relativeTime, false, "t toggles relative time off");
 });

@@ -54,7 +54,11 @@ export interface UiConfig {
   lines: "auto" | 1 | 2;
   /** Maximum context compactions before a handoff alert (1..20). */
   compactMax: number;
+  /** Icon glyph set: "unicode" | "ascii" | "nerd". */
+  icons: IconSetName;
 }
+
+export type IconSetName = "unicode" | "ascii" | "nerd";
 
 export interface ForgeryConfig {
   agents: AgentsConfig;
@@ -81,6 +85,7 @@ export const DEFAULT_CONFIG: ForgeryConfig = {
     animations: true,
     lines: "auto",
     compactMax: 5,
+    icons: "unicode",
   },
 };
 
@@ -106,6 +111,7 @@ export interface ParsableUiConfig {
   animations?: boolean;
   lines?: "auto" | 1 | 2;
   compactMax?: number;
+  icons?: IconSetName;
 }
 
 export interface ParsableForgeryConfig {
@@ -275,6 +281,18 @@ export function parseConfig(raw: unknown): ParsableForgeryConfig {
       }
       // else: leave as default
     }
+    // icons
+    if ('icons' in uiInput) {
+      if (uiInput.icons === "unicode" || uiInput.icons === "ascii" || uiInput.icons === "nerd") {
+        result.ui.icons = uiInput.icons;
+      }
+      // else: leave as default
+    }
+    // Env override FORGERY_ICONS (takes precedence over config file).
+    const envIcons = process.env.FORGERY_ICONS;
+    if (envIcons === "unicode" || envIcons === "ascii" || envIcons === "nerd") {
+      result.ui.icons = envIcons;
+    }
   }
 
   return result;
@@ -348,6 +366,9 @@ export function mergeConfig(base: ForgeryConfig, override: ParsableForgeryConfig
       override.ui.compactMax !== DEFAULT_CONFIG.ui.compactMax
     ) {
       uiBase.compactMax = override.ui.compactMax;
+    }
+    if (override.ui.icons !== undefined && override.ui.icons !== DEFAULT_CONFIG.ui.icons) {
+      uiBase.icons = override.ui.icons;
     }
     out.ui = uiBase;
   }

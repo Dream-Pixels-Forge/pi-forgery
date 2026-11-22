@@ -513,6 +513,21 @@ export class ForgeryActivityStore {
     this.#notify();
   }
 
+  /** Agents belonging to a run, newest-first. Legacy agents without a runId
+   *  are excluded here; use unassignedAgents() for them. */
+  agentsForRun(runId: string): ForgeryAgentRecord[] {
+    return [...this.#agents.values()]
+      .filter((a) => a.runId === runId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /** Legacy agents that carry no runId (e.g. from replayed exports). */
+  unassignedAgents(): ForgeryAgentRecord[] {
+    return [...this.#agents.values()]
+      .filter((a) => !a.runId)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
   // ── reads / snapshots ──────────────────────────────────────────────────
 
   runs(): ForgeryRun[] {

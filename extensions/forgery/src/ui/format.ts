@@ -54,6 +54,80 @@ export const STATUS_STYLE = {
   { glyph: string; token: ThemeColor; animated?: boolean }
 >;
 
+/** Selectable icon sets. The default `unicode` set uses only width-1 glyphs
+ *  (no ambiguous emoji such as 📁). `icons(name)` resolves a set by name. */
+export interface IconSet {
+  running: string;
+  done: string;
+  failed: string;
+  stopped: string;
+  queued: string;
+  folder: string;
+  branch: string;
+  spinner: string[];
+}
+
+export const ICONS: Record<"unicode" | "ascii" | "nerd", IconSet> = {
+  unicode: {
+    running: "●",
+    done: "✓",
+    failed: "✗",
+    stopped: "■",
+    queued: "○",
+    folder: "▸",
+    branch: "⎇",
+    spinner: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+  },
+  ascii: {
+    running: "*",
+    done: "+",
+    failed: "x",
+    stopped: "#",
+    queued: ".",
+    folder: ">",
+    branch: "@",
+    spinner: ["|", "/", "-", "\\"],
+  },
+  nerd: {
+    running: "",
+    done: "",
+    failed: "",
+    stopped: "",
+    queued: "",
+    folder: "",
+    branch: "",
+    spinner: ["", "", "", "", "", ""],
+  },
+} as const;
+
+/** Resolve an icon set by name (default `unicode`). */
+export function icons(name: "unicode" | "ascii" | "nerd" = "unicode"): IconSet {
+  return ICONS[name];
+}
+
+/** Glyph for a status from the active icon set, falling back to STATUS_STYLE. */
+export function statusGlyphFromSet(
+  status: UiStatus,
+  iconSet: IconSet,
+  frameIndex: number,
+): string {
+  const style = STATUS_STYLE[status];
+  if (status === "running") return iconSet.spinner[frameIndex % iconSet.spinner.length];
+  switch (status) {
+    case "queued":
+      return iconSet.queued;
+    case "completed":
+      return iconSet.done;
+    case "failed":
+      return iconSet.failed;
+    case "cancelled":
+    case "stopped":
+      return iconSet.stopped;
+    default:
+      return style.glyph;
+  }
+}
+
 /** Frame index for the running spinner at wall-clock time `now` (80 ms per frame). */
 export function frameAt(now: number): number {
   return Math.floor(now / 80) % SPINNER_FRAMES.length;

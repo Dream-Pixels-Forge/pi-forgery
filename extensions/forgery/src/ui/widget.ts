@@ -11,7 +11,8 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable } from "@earendil-works/pi-tui";
-import type { ForgeryAgentRecord, ForgerySnapshot, ForgerySubgoal } from "../activity/types";
+import { wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { ForgeryAgentRecord, ForgeryRun, ForgerySnapshot, ForgerySubgoal } from "../activity/types";
 import {
   agentRowCols,
   cols,
@@ -115,15 +116,29 @@ export class ForgeryWidget implements Component, Focusable {
   }
 
   /** Build the selectable-row list and clamp the selection; returns the selected id. */
-  #buildSelectableRows(snap: ForgerySnapshot): string | undefined {
+  #buildSelectableRows(snap: ForgerySnapshot, agents: ForgeryAgentRecord[]): string | undefined {
     this.#selectableRows = [];
     const active = snap.runs.find((r) => r.status === "running");
     if (active) this.#selectableRows.push({ id: `run:${active.name}`, type: "run" });
-    for (const a of snap.agents) this.#selectableRows.push({ id: a.id, type: "agent" });
+    for (const a of agents) this.#selectableRows.push({ id: a.id, type: "agent" });
     if (active) for (const s of active.subgoals) this.#selectableRows.push({ id: s.id, type: "subgoal" });
     // Clamp selection when rows disappear.
     if (this.selectedIndex >= this.#selectableRows.length) this.selectedIndex = -1;
     return this.#selectableRows[this.selectedIndex]?.id;
+  }
+
+  /** Agents of the active run, else the latest run, else unassigned (no runId). */
+  #runAgents(snap: ForgerySnapshot): ForgeryAgentRecord[] {
+    const active = snap.runs.find((r) => r.status === "running");
+    const latest = snap.runs[0];
+    const target = active ?? latest;
+    const runId = target?.id;
+    const agents = [...snap.agents].sort((a, b) => b.updatedAt - a.updatedAt);
+    if (runId) {
+      const runAgents = agents.filter((a) => a.runId === runId);
+      if (runAgents.length > 0) return runAgents;
+    }
+    return agents.filter((a) => !a.runId);
   }
 
   /** Whether the rendered content changed vs the last render (at terminal width). */
@@ -137,8 +152,9 @@ export class ForgeryWidget implements Component, Focusable {
           Math.min(this.maxRows, Math.floor((process.stdout.rows ?? 40) * WIDGET_TERMINAL_ROW_SHARE)),
         )
       : 1;
-    const selectedId = this.#buildSelectableRows(snap);
-    const lines = this.#cardLines(theme, snap, active, width, frame, maxRows, selectedId);
+    const runAgents = this.#runAgents(snap);
+    const selectedId = this.#buildSelectableRows(snap, runAgents);
+    const lines = this.#cardLines(theme, snap, active, width, frame, maxRows, selectedId, runAgents);
     return this.#linesHash(lines) !== this.#lastRenderedHash;
   }
 
@@ -209,6 +225,18 @@ export class ForgeryWidget implements Component, Focusable {
         );
         this.interaction?.requestRender();
         break;
+      case "\u001b[5~": // PgUp — scroll transcript pane up (only when expanded)
+        if (this.expandedId) {
+          this.scroll = Math.max(0, this.scroll - 5);
+          this.interaction?.requestRender();
+        }
+        break;
+      case "\u001b[6~": // PgDn — scroll transcript pane down (only when expanded)
+        if (this.expandedId) {
+          this.scroll = this.scroll + 5;
+          this.interaction?.requestRender();
+        }
+        break;
     }
   }
 
@@ -223,9 +251,10 @@ export class ForgeryWidget implements Component, Focusable {
         )
       : 1;
     const frame = frameAt(this.clock());
+    const runAgents = this.#runAgents(snap);
     // Always build the selectable-row model so handleInput works even while
     // hidden; only render output when visible (SG-21).
-    const selectedId = this.#buildSelectableRows(snap);
+    const selectedId = this.#buildSelectableRows(snap, runAgents);
     if (!this.#visible) {
       this.#lastRendered = [];
       return [];
@@ -240,6 +269,7 @@ export class ForgeryWidget implements Component, Focusable {
       frame,
       maxRows,
       selectedId,
+      runAgents,
     );
     this.#lastRenderWidth = width;
     this.#lastRenderedHash = this.#linesHash(lines);
@@ -257,17 +287,36 @@ export class ForgeryWidget implements Component, Focusable {
     frame: number,
     maxRows: number,
     selectedId?: string,
+    runAgents: ForgeryAgentRecord[] = [],
   ): string[] {
     if (!active) {
+      const finished = snap.runs.find(
+        (r) =>
+          r.status !== "running" &&
+          r.finishedAt !== undefined &&
+          Date.now() - r.finishedAt < (this.retention?.retainMs ?? 30_000),
+      );
+      if (finished) {
+        return this.#finishedRunSummary(theme, snap, finished, width, maxRows);
+      }
       return [this.#idleLine(theme, width, snap)];
     }
     // Below 40 columns: drop borders, render flat lines that still fit.
     if (width < 40) {
-      const flat = this.#cardBody(theme, snap, active, width, frame, maxRows, selectedId);
+      const flat = this.#cardBody(theme, snap, active, width, frame, maxRows, selectedId, runAgents);
       return flat.map((l) => fit(l, width));
     }
     const header = this.#headerLine(theme, snap, active, width - 4, frame);
-    const body = this.#cardBody(theme, snap, active, width - 4, frame, maxRows - 2, selectedId);
+    const body = this.#cardBody(
+      theme,
+      snap,
+      active,
+      width - 4,
+      frame,
+      maxRows - 2,
+      selectedId,
+      runAgents,
+    );
     const hint = this.focused
       ? fit(theme.fg("muted", `  ↑↓ select · ⏎ expand · esc back`), width - 4)
       : undefined;
@@ -283,18 +332,27 @@ export class ForgeryWidget implements Component, Focusable {
     frame: number,
     maxRows: number,
     selectedId?: string,
+    runAgents: ForgeryAgentRecord[] = [],
   ): string[] {
     const lines: string[] = [];
     let remaining = maxRows;
     // Hint footer takes a row when focused; reserve it first.
     if (this.focused) remaining -= 1;
-    const agentRows = this.#agentRows(theme, snap, width, frame, remaining, selectedId);
+    const agentRows = this.#agentRows(theme, runAgents, width, frame, remaining, selectedId);
     if (agentRows.rows.length > 0) {
       lines.push(...agentRows.rows);
       remaining -= agentRows.rows.length;
       if (agentRows.more > 0 && remaining > 0) {
         lines.push(fit(theme.fg("muted", `  … +${agentRows.more} more (⏎ dashboard)`), width));
         remaining -= 1;
+      }
+    }
+    // Expanded transcript pane for the focused row.
+    if (this.expandedId && remaining > 0) {
+      const expandedLines = this.#expandedPane(theme, width, remaining);
+      if (expandedLines.length > 0) {
+        lines.push(...expandedLines);
+        remaining -= expandedLines.length;
       }
     }
     if (remaining > 0) {
@@ -326,6 +384,83 @@ export class ForgeryWidget implements Component, Focusable {
     return fit(` ${theme.fg("dim", "forgery · idle")}`, width);
   }
 
+  /** Finished-run summary card shown during the retention window. */
+  #finishedRunSummary(
+    theme: Theme,
+    snap: ForgerySnapshot,
+    run: ForgeryRun,
+    width: number,
+    maxRows: number,
+  ): string[] {
+    const lines: string[] = [];
+    const agents = snap.agents.filter((a) => a.runId === run.id);
+    const subgoals = run.subgoals ?? [];
+    const completedAgents = agents.filter((a) => a.status === "completed").length;
+    const failedAgents = agents.filter(
+      (a) => a.status === "failed" || a.status === "stopped" || a.status === "timed_out",
+    ).length;
+    const runningAgents = agents.filter((a) => a.status === "running").length;
+    const completedSubgoals = subgoals.filter((s) => s.status === "completed").length;
+    const duration = run.finishedAt ?? run.startedAt - run.startedAt;
+    const durStr = formatDuration(duration);
+    const costStr = formatCost(run.metrics?.cost);
+
+    const glyph = colorStatus(theme, run.status);
+    const statusStr = theme.fg("dim", run.status);
+    const title = ` ${glyph} ${theme.fg("text", theme.bold(run.name))} ${statusStr} · ${durStr}${costStr ? ` · ${costStr}` : ""}`;
+
+    const bodyLines: string[] = [];
+    bodyLines.push(
+      theme.fg(
+        "muted",
+        `${agents.length} agents · ${completedAgents}✓ ${failedAgents}✗ ${runningAgents}⠹ · subgoals ${completedSubgoals}/${subgoals.length} · ${formatTokens(snap.activeTotals?.tokens ?? 0)}`,
+      ),
+    );
+
+    // On failure, show the first failing agent/subgoal and error.
+    if (run.status === "failed" || run.status === "cancelled") {
+      const failedAgent = agents.filter(
+        (a) => a.status === "failed" || a.status === "stopped" || a.status === "timed_out",
+      ).length > 0;
+      const failedSubgoal = subgoals.filter(
+        (s) => s.status === "failed" || s.status === "blocked",
+      ).length > 0;
+      if (failedAgent || failedSubgoal) {
+        const failingAgent = agents.find(
+          (a) => a.status === "failed" || a.status === "stopped" || a.status === "timed_out",
+        );
+        if (failingAgent) {
+          lines.push(
+            theme.fg(
+              "error",
+              `  ✗ ${failingAgent.name} — ${safeText(truncate(failingAgent.error ?? failingAgent.current ?? "", 40))}`,
+            ),
+          );
+        } else {
+          const failingSubgoal = subgoals.find(
+            (s) => s.status === "failed" || s.status === "blocked",
+          );
+          if (failingSubgoal) {
+            lines.push(
+              theme.fg(
+                "error",
+                `  ✗ ${failingSubgoal.name} — ${safeText(truncate(failingSubgoal.error ?? "", 40))}`,
+              ),
+            );
+          }
+        }
+      }
+    }
+
+    // Below 40 columns: single unbordered line.
+    if (width < 40) {
+      const flat = fit(`${title} ${bodyLines.join("  ")}`, width);
+      return [flat];
+    }
+
+    return panel(lines, { title, bottom: theme.fg("muted", `  ⏎ details · esc back`) });
+  }
+
   #headerLine(
     theme: Theme,
     snap: ForgerySnapshot,
@@ -346,14 +481,14 @@ export class ForgeryWidget implements Component, Focusable {
 
   #agentRows(
     theme: Theme,
-    snap: ForgerySnapshot,
+    agents: ForgeryAgentRecord[],
     width: number,
     frame: number,
     max: number,
     selectedId?: string,
   ): { rows: string[]; more: number } {
     // Build a parent→child tree so subagents render nested under their parent.
-    const tree = this.#buildAgentTree(snap.agents);
+    const tree = this.#buildAgentTree(agents);
     // Show only running/recent agents (top-level + their subagents), depth-first.
     const visible = tree.filter(({ agent }) => agent.status !== "completed" || agent.current);
     // Order: running → blocked/queued → failed → completed, most recent first within a group.
@@ -426,14 +561,18 @@ export class ForgeryWidget implements Component, Focusable {
   }
 
   /** Expanded transcript pane for the focused row — content height, capped at `maxRows`. */
+  /** Expanded transcript pane content lines for the focused row. */
   #expandedPane(theme: Theme, width: number, maxRows: number): string[] {
     if (maxRows <= 0 || !this.expandedId) return [];
-    const lines = this.interaction?.activity(this.expandedId, this.scroll) ?? [];
-    if (lines.length === 0) return [];
-    const body = lines.slice(0, maxRows).map((l) => fit(l, width));
-    const divider = theme.fg("border", `── ${theme.bold(this.expandedId ?? "")} ──`);
-    const bottom = theme.fg("border", "─".repeat(width));
-    return [divider, ...body, bottom];
+    const snap = this.snapshot();
+    const agent = snap.agents.find((a) => a.id === this.expandedId);
+    if (!agent || !agent.text) return [];
+    // Wrap the agent's text to fit the pane width, then scroll.
+    const bodyLines: string[] = [];
+    for (const line of agent.text.split("\n")) {
+      bodyLines.push(...wrapTextWithAnsi(line, width));
+    }
+    return bodyLines.slice(this.scroll, this.scroll + maxRows);
   }
 
   /** Subgoal tree for the active run — nested nodes with connectors + progress bars. */

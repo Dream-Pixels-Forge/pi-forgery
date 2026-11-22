@@ -25,6 +25,7 @@ test("exportSnapshot + importSnapshot round-trip preserves runs, agents, subgoal
     name: "coder",
     task: "write code",
     status: "completed",
+    runId: "run-1",
     startedAt: Date.now(),
     updatedAt: Date.now(),
   });
@@ -67,9 +68,53 @@ test("exportSnapshot + importSnapshot round-trip preserves runs, agents, subgoal
   assert.equal(agents.length, 1);
   assert.equal(agents[0].id, "agent-1");
   assert.equal(agents[0].name, "coder");
+  assert.equal(agents[0].runId, "run-1");
 
   // Revision should have bumped
   assert.ok(store.revision() > revisionBeforeImport);
+});
+
+test("importSnapshot of legacy snapshot without runId does not crash", () => {
+  const store = new ForgeryActivityStore();
+  const legacy = {
+    runs: [
+      {
+        id: "run-1",
+        name: "old run",
+        status: "completed",
+        phases: [],
+        calls: [],
+        items: [],
+        events: [],
+        subgoals: [],
+        startedAt: 1000,
+        updatedAt: 1000,
+        cwd: "/tmp",
+        compacts: 0,
+      },
+    ],
+    agents: [
+      {
+        id: "agent-1",
+        name: "legacy agent",
+        task: "t",
+        status: "completed",
+        // no runId — legacy record
+        startedAt: 1000,
+        updatedAt: 1000,
+      },
+    ],
+    activeRunId: undefined,
+    activeTotals: undefined,
+    subgoalTotals: undefined,
+    now: 1000,
+  };
+
+  assert.doesNotThrow(() => store.importSnapshot(JSON.stringify(legacy)));
+  const agents = store.agents();
+  assert.equal(agents.length, 1);
+  assert.equal(agents[0].runId, undefined);
+  assert.equal(store.unassignedAgents().length, 1);
 });
 
 test("importSnapshot of malformed JSON throws", () => {

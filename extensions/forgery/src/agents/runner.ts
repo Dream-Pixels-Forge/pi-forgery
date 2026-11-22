@@ -25,6 +25,8 @@ export interface AgentRunRequest {
   systemPrompt?: string;
   /** Name of the agent for the activity widget. */
   name?: string;
+  /** Run id this agent belongs to, so agents can be grouped per run. */
+  runId?: string;
   /** Parent agent id, if this agent is a subagent of another agent. */
   parentId?: string;
 }
@@ -91,6 +93,7 @@ export class AgentRunner {
       startedAt,
       updatedAt: startedAt,
       parentId: req.parentId,
+      runId: req.runId,
     };
     this.agents.set(id, agent);
     this.notify();

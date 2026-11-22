@@ -1,6 +1,6 @@
 # SG-25 — Golden render tests for UI surfaces
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0
 - **Area:** `extensions/forgery/tests/`, `tests/fixtures/ui/`
 

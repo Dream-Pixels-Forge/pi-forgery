@@ -1,6 +1,6 @@
 # SG-08 — Finished-run summary card
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P2
 - **Area:** `src/ui/widget.ts`
 

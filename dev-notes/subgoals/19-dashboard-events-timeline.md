@@ -1,6 +1,6 @@
 # SG-19 — Dashboard: events timeline & items
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P2
 - **Area:** `src/ui/dashboard.ts`
 

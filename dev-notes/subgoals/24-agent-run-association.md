@@ -1,6 +1,6 @@
 # SG-24 — Associate agents with their run (`runId`)
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `extensions/forgery/src/activity/types.ts`, store, widget, dashboard
 

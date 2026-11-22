@@ -1,6 +1,6 @@
 # SG-23 — Selectable icon sets (unicode / ascii / nerd)
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P2
 - **Area:** `extensions/forgery/src/ui/format.ts`, config schema
 

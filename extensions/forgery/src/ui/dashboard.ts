@@ -9,7 +9,7 @@
  * component is `Focusable` so it owns the keyboard while open; Esc closes.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type {
   Component,
   Focusable,
@@ -20,6 +20,7 @@ import type {
 import { matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type {
   ForgeryAgentRecord,
+  ForgeryEvent,
   ForgeryRun,
   ForgerySnapshot,
   ForgerySubgoal,
@@ -39,6 +40,8 @@ import {
   cols,
   agentElapsed,
   renderStatus,
+  vw,
+  progressBar,
 } from "./format";
 
 type DashboardView = "activity" | "settings";
@@ -52,6 +55,8 @@ export interface ForgeryDashboardOptions {
   hostCalls: string[];
   /** Agent runner config (settings view). */
   agentConfig: { maxConcurrent: number; piBinary: string };
+  /** Available terminal rows (used for height-aware layout). */
+  rows?: number;
 }
 
 export class ForgeryDashboard implements Component, Focusable {
@@ -67,8 +72,18 @@ export class ForgeryDashboard implements Component, Focusable {
   private runIndex = 0;
   /** Which entity row is focused within the activity view. */
   private entityIndex = 0;
+  /** Scroll offset within the focused pane's entity list. */
+  private scrollOffset = 0;
   /** Whether the help overlay is open. */
   private helpOpen = false;
+  /** Available terminal rows (for height-aware layout). */
+  private rows = 24;
+  /** Event timeline filter: all / errors / agents / phases. */
+  private eventFilter: "all" | "errors" | "agents" | "phases" = "all";
+  /** Show relative time (+42s) instead of clock time in events. */
+  private relativeTime = false;
+  /** Scroll offset within the events timeline. */
+  private eventScrollOffset = 0;
   private opts: ForgeryDashboardOptions;
 
   /** Declarative keymap — drives both handling and the help bar so they can't drift. */
@@ -82,12 +97,17 @@ export class ForgeryDashboard implements Component, Focusable {
     { keys: ["up", "k"], label: "select up", run: (d) => d.move(-1) },
     { keys: ["down", "j"], label: "select down", run: (d) => d.move(1) },
     { keys: ["tab"], label: "filter", run: (d) => d.cycleFilter() },
-    { keys: ["f"], label: "filter", run: (d) => d.cycleFilter() },
     { keys: ["enter"], label: "details", run: (d) => d.toggleDetails() },
     { keys: ["?"], label: "help", run: (d) => (d.helpOpen = !d.helpOpen) },
     { keys: ["escape", "q"], label: "close", run: (d) => d.closeOrBack() },
     { keys: ["1"], label: "activity", run: (d) => (d.view = "activity") },
     { keys: ["2"], label: "settings", run: (d) => (d.view = "settings") },
+    { keys: ["pageUp"], label: "page up", run: (d) => d.scrollPage(-1) },
+    { keys: ["pageDown"], label: "page down", run: (d) => d.scrollPage(1) },
+    { keys: ["home"], label: "top", run: (d) => d.scrollTop() },
+    { keys: ["end"], label: "bottom", run: (d) => d.scrollBottom() },
+    { keys: ["t"], label: "relative time", run: (d) => d.toggleRelativeTime() },
+    { keys: ["f"], label: "event filter", run: (d) => d.cycleEventFilter() },
   ];
 
   constructor(
@@ -100,6 +120,7 @@ export class ForgeryDashboard implements Component, Focusable {
     this.theme = theme;
     this.keybindings = keybindings;
     this.opts = opts;
+    this.rows = opts.rows ?? 24;
   }
 
   invalidate(): void {
@@ -162,6 +183,23 @@ export class ForgeryDashboard implements Component, Focusable {
     // details pane is deferred to a later subgoal; keep the binding stable.
   }
 
+  /** Cycle the event timeline filter: all → errors → agents → phases. */
+  cycleEventFilter(): void {
+    const order: Array<"all" | "errors" | "agents" | "phases"> = [
+      "all",
+      "errors",
+      "agents",
+      "phases",
+    ];
+    const i = order.indexOf(this.eventFilter);
+    this.eventFilter = order[(i + 1) % order.length];
+  }
+
+  /** Toggle between absolute and relative time in the events timeline. */
+  toggleRelativeTime(): void {
+    this.relativeTime = !this.relativeTime;
+  }
+
   /** Go back one settings level, or close the overlay at the root. */
   closeOrBack(): void {
     if (this.view === "settings") {
@@ -213,76 +251,163 @@ export class ForgeryDashboard implements Component, Focusable {
     const theme = this.theme;
     const runs = snap.runs;
     const active = runs.find((r) => r.status === "running");
-    // Clamp runIndex to the current run list and reset entity selection if needed.
     this.runIndex = Math.max(0, Math.min(runs.length - 1, this.runIndex));
     const focus = runs[this.runIndex] ?? active ?? runs[0];
-    const header = fit(
-      [
-        theme.fg("text", theme.bold("⌗ /forgery")),
-        ` ${theme.fg("muted", "dashboard")}`,
-        ` ${theme.fg("dim", "1=activity 2=settings · f=filter · ? help · esc close")}`,
-      ].join(""),
-      width,
-    );
 
-    const lines: string[] = [header];
-    lines.push(fit(this.#helpBar(width), width));
+    const lines: string[] = [];
+
+    // Tab bar: every run, active highlighted with ‹ ›.
+    lines.push(...this.#renderTabBar(width, runs, this.runIndex, theme, snap));
     lines.push("");
 
     if (!focus) {
       lines.push(theme.fg("dim", "no runs yet"));
       lines.push(theme.fg("dim", `host calls: ${this.opts.hostCalls.length} · agents: ${snap.agents.length}`));
-      return this.#pad(lines, width, 24);
+      return panel(lines, { title: "⌗ /forgery" }).map((l) => fit(l, width));
     }
 
-    // Phase panels.
-    for (const phase of focus.phases.slice(0, 12)) {
-      const glyph = colorStatus(theme, phase.status);
-      const progress =
-        phase.total !== undefined && phase.current !== undefined
-          ? ` ${phase.current}/${phase.total}`
-          : "";
-      lines.push(
-        `  ${glyph} ${theme.fg("text", theme.bold(phase.name))}${theme.fg("dim", progress)}${theme.fg(
-          "dim",
-          ` · ${formatDuration((phase.finishedAt ?? snap.now) - phase.startedAt)}`,
-        )}`,
-      );
-    }
-
-    // Call list (most recent first).
-    const calls = focus.calls.slice(Math.max(0, focus.calls.length - 12)).reverse();
-    if (calls.length > 0) {
-      lines.push("");
-      lines.push(theme.fg("muted", `calls (${calls.length})`));
-      calls.forEach((call) => {
-        const prefix = " ";
-        const glyph = colorStatus(theme, call.status);
-        const refPart = theme.fg("text", call.ref);
-        const labelPart = theme.fg("dim", truncate(call.label ?? "", 20));
-        const statusPart = theme.fg("dim", ` · ${call.status}`);
-        let extraPart = "";
-        if (call.preview) {
-          extraPart = ` ${theme.fg("dim", truncate(call.preview, 20))}`;
-        } else if (call.error) {
-          extraPart = ` ${theme.fg("error", truncate(call.error, 20))}`;
-        }
-        const line = `${prefix} ${glyph} ${refPart} ${labelPart}${statusPart}${extraPart}`;
-        lines.push(line);
-      });
-    }
-
-    // Entity list (agents) — aligned table reused from the widget column grid (SG-04).
-    const entities = this.#filteredAgents(snap.agents, this.filter);
-    const tree = this.#buildAgentTree(entities);
+    // Summary block: goal, progress bar, agent counts, tokens, cost.
+    lines.push(...this.#renderSummary(width, focus, snap, theme));
     lines.push("");
-    lines.push(
-      theme.fg("muted", `agents (${entities.length}) · filter: ${this.filter}`),
+
+    // Body: agents then subgoals, stacked.
+    const frame = Math.floor(snap.now / 80) % 10;
+    const agents = snap.agents.filter((a) => a.runId === focus.id);
+    const subgoals = focus.subgoals ?? [];
+
+    const agentLines = this.#renderAgentLines(
+      agents,
+      theme,
+      frame,
+      this.entityIndex,
+      snap,
+      width,
     );
-    // Header row (dim), numeric columns right-aligned.
+    const subgoalLines = this.#renderSubgoalLines(subgoals, theme, frame);
+
+    // Height-aware layout: compute rows available for panes after header/summary.
+    const headerLines = this.#renderTabBar(width, runs, this.runIndex, theme, snap).length + 1;
+    const summaryLines = this.#renderSummary(width, focus, snap, theme).length + 1;
+    const hintLines = 1;
+    const paneRows = Math.max(3, this.rows - headerLines - summaryLines - hintLines - 2);
+
+    const agentScroll = this.#scrollPane(agentLines, paneRows);
+    const subgoalScroll = this.#scrollPane(subgoalLines, paneRows);
+    lines.push(...agentScroll);
+    if (agentScroll.length > 0 && subgoalScroll.length > 0) lines.push("");
+    lines.push(...subgoalScroll);
+    if (agentScroll.length < agentLines.length) {
+      lines.push(theme.fg("muted", `  ↓ ${agentLines.length - agentScroll.length} more`));
+    }
+    if (subgoalScroll.length < subgoalLines.length) {
+      lines.push(theme.fg("muted", `  ↓ ${subgoalLines.length - subgoalScroll.length} more`));
+    }
+
+    // Events pane (most recent events).
+    const eventLines = this.#renderEvents(width, focus, snap, theme);
+    if (eventLines.length > 0) {
+      lines.push("");
+      lines.push(...eventLines);
+    }
+
+    // Items pane (deliverables/artifacts produced by the run).
+    const itemLines = this.#renderItems(width, focus, snap, theme);
+    if (itemLines.length > 0) {
+      lines.push("");
+      lines.push(...itemLines);
+    }
+
+    const hint = theme.fg(
+      "muted",
+      `tab panes · ←→ runs · ↑↓ select · ⏎ details · ? help · esc close`,
+    );
+    return panel(lines, { title: "⌗ /forgery", bottom: fit(hint, width - 4) }).map((l) =>
+      fit(l, width),
+    );
+  }
+
+  /** Tab bar: every run, active highlighted with ‹ › and a status glyph. */
+  #renderTabBar(
+    width: number,
+    runs: ForgeryRun[],
+    runIndex: number,
+    theme: Theme,
+    snap: ForgerySnapshot,
+  ): string[] {
+    const shown = runs.slice(0, 6);
+    const parts: string[] = [];
+    shown.forEach((run, i) => {
+      const isActive = i === runIndex;
+      const glyph = colorStatus(theme, run.status);
+      const name = theme.fg("text", theme.bold(run.name));
+      if (isActive) {
+        parts.push(theme.fg("accent", `‹ ${glyph} ${name} ›`));
+      } else {
+        parts.push(theme.fg("dim", `${glyph} ${name}`));
+      }
+    });
+    const left = parts.join("  ");
+
+    // Active run status on the right.
+    const activeRun = runs.find((r) => r.status === "running");
+    let right = "";
+    if (activeRun) {
+      const glyph = renderStatus(theme, "running", Math.floor(snap.now / 80) % 10, true);
+      right = `${glyph} ${formatDuration(snap.now - activeRun.startedAt)}`;
+    }
+    const rightWidth = vw(right);
+    const leftWidth = vw(left);
+    const gap = Math.max(1, width - leftWidth - rightWidth);
+    return [left + " ".repeat(gap) + right];
+  }
+
+  /** Summary block: goal, progress bar, agent counts, tokens, cost. */
+  #renderSummary(
+    width: number,
+    focus: ForgeryRun,
+    snap: ForgerySnapshot,
+    theme: Theme,
+  ): string[] {
+    const lines: string[] = [];
+    const subgoals = focus.subgoals ?? [];
+    const completed = subgoals.filter((s) => s.status === "completed").length;
+    const total = subgoals.length;
+    const bar = progressBar(completed, total > 0 ? total : undefined, 10);
+    const agents = snap.agents.filter((a) => a.runId === focus.id);
+    const running = agents.filter((a) => a.status === "running").length;
+    const completedAgents = agents.filter((a) => a.status === "completed").length;
+    const failed = agents.filter(
+      (a) =>
+        a.status === "failed" || a.status === "stopped" || a.status === "timed_out",
+    ).length;
+    const tokens = snap.activeTotals?.tokens ?? 0;
+    const cost = snap.activeTotals?.cost ?? 0;
+
+    lines.push(theme.fg("muted", `goal  ${focus.name ?? "untitled"}`));
+    lines.push(
+      theme.fg(
+        "dim",
+        `${bar} ${completed}/${total} subgoals · ${agents.length} agents (${
+          running
+        }⠹ ${completedAgents}✓ ${failed}✗) · ${formatTokens(tokens)} · ${formatCost(cost)}`,
+      ),
+    );
+    return lines;
+  }
+
+  /** Agent table rows (reuses the widget column grid, SG-04). */
+  #renderAgentLines(
+    agents: ForgeryAgentRecord[],
+    theme: Theme,
+    frame: number,
+    entityIndex: number,
+    snap: ForgerySnapshot,
+    width: number,
+  ): string[] {
+    const lines: string[] = [];
     const headerCells: Array<{ text: string; width: number; align?: "left" | "right" }> = [
       { text: theme.fg("dim", "⬤"), width: 2 },
-      { text: theme.fg("dim", "name"), width: 16, align: "left" },
+      { text: theme.fg("dim", "name"), width: 14, align: "left" },
       { text: theme.fg("dim", "activity"), width: 1 },
       { text: theme.fg("dim", "turns"), width: 5, align: "right" },
       { text: theme.fg("dim", "calls"), width: 5, align: "right" },
@@ -292,30 +417,17 @@ export class ForgeryDashboard implements Component, Focusable {
     ];
     const hFixed =
       headerCells.reduce((s, c) => s + c.width, 0) + 1 * Math.max(0, headerCells.length - 1);
-    headerCells[2].width = Math.max(3, width - hFixed);
     lines.push(theme.fg("dim", cols(headerCells, 1)));
 
-    // Totals across visible agents.
-    const totals = {
-      turns: entities.reduce((s, a) => s + (a.turns ?? 0), 0),
-      calls: entities.reduce((s, a) => s + (a.toolCalls ?? 0), 0),
-      tokens: entities.reduce((s, a) => s + (a.usage?.output ?? 0), 0),
-      cost: entities.reduce((s, a) => s + (a.usage?.cost ?? 0), 0),
-    };
-    const totalTime =
-      entities.reduce(
-        (s, a) => s + (agentElapsed(a, snap.now) ?? 0),
-        0,
-      );
-
-    const frame = Math.floor(snap.now / 80) % 10;
+    const tree = this.#buildAgentTree(agents);
+    const frameSpinner = Math.floor(snap.now / 80) % 10;
     tree.forEach(({ agent, depth }, i) => {
-      const isFocused = i === this.entityIndex;
+      const isFocused = i === entityIndex;
       const gutter = isFocused ? theme.fg("accent", "▌") : " ";
       const indent = depth > 0 ? `${"  ".repeat(depth - 1)}└─ ` : "";
       const glyph =
         agent.status === "running"
-          ? renderStatus(theme, agent.status, frame, true)
+          ? renderStatus(theme, agent.status, frameSpinner, true)
           : colorStatus(theme, agent.status);
       const name = theme.fg("text", theme.bold(`${indent}${agent.name}`));
       const activity = agent.current
@@ -330,7 +442,7 @@ export class ForgeryDashboard implements Component, Focusable {
 
       const cells: Array<{ text: string; width: number; align?: "left" | "right" }> = [
         { text: glyph, width: 2 },
-        { text: name, width: 16 },
+        { text: name, width: 14 },
         { text: activity, width: 1 },
         { text: turns, width: 5, align: "right" },
         { text: calls, width: 5, align: "right" },
@@ -340,56 +452,191 @@ export class ForgeryDashboard implements Component, Focusable {
       ];
       const fixed =
         cells.reduce((s, c) => s + c.width, 0) + 1 * Math.max(0, cells.length - 1);
-      // Account for the gutter + space prefix (2 visible cols) so the row never overflows.
-      cells[2].width = Math.max(3, width - 2 - fixed);
+      cells[2].width = Math.max(3, width - fixed);
       let row = cols(cells, 1);
       if (agent.status === "completed") {
         row = theme.fg("muted", row);
       }
       lines.push(`${gutter} ${row}`);
     });
+    return lines;
+  }
 
-    // Totals row across visible agents.
-    const totalsRow: Array<{ text: string; width: number; align?: "left" | "right" }> = [
-      { text: "", width: 2 },
-      { text: theme.fg("dim", `total ${entities.length}`), width: 16 },
-      { text: "", width: 1 },
-      { text: theme.fg("dim", `t${totals.turns}`), width: 5, align: "right" },
-      { text: theme.fg("dim", totals.calls.toString()), width: 5, align: "right" },
-      { text: theme.fg("dim", formatTokens(totals.tokens)), width: 6, align: "right" },
-      { text: theme.fg("dim", formatCost(totals.cost)), width: 6, align: "right" },
-      { text: theme.fg("dim", formatDuration(totalTime)), width: 6, align: "right" },
-    ];
-    const tFixed =
-      totalsRow.reduce((s, c) => s + c.width, 0) + 1 * Math.max(0, totalsRow.length - 1);
-    totalsRow[2].width = Math.max(3, width - tFixed);
-    lines.push(theme.fg("dim", "─".repeat(width)));
-    lines.push(cols(totalsRow, 1));
-
-    // Subgoal list (subgoals of the focused run).
-    const focusSubgoals = focus?.subgoals ?? [];
-    if (focusSubgoals.length > 0) {
-      lines.push("");
-      lines.push(
-        theme.fg(
-          "muted",
-          `subgoals (${focusSubgoals.filter((s) => s.status === "completed").length}/${focusSubgoals.length})`,
-        ),
-      );
-      focusSubgoals.slice(0, 10).forEach((subgoal) => {
-        const glyph = colorStatus(theme, subgoal.status);
-        const progress =
-          subgoal.total !== undefined && subgoal.completed !== undefined
-            ? ` ${theme.fg("dim", `${subgoal.completed}/${subgoal.total}`)}`
-            : "";
-        const current = subgoal.current ? ` ${theme.fg("dim", truncate(subgoal.current, 28))}` : "";
-        lines.push(
-          `    ${glyph} ${theme.fg("text", theme.bold(subgoal.name))}${theme.fg("dim", ` · ${subgoal.status}`)}${progress}${current}`,
-        );
-      });
+  /** Subgoal rows (reuses the widget subgoal styling, SG-05). */
+  #renderSubgoalLines(
+    subgoals: ForgerySubgoal[],
+    theme: Theme,
+    frame: number,
+  ): string[] {
+    const lines: string[] = [];
+    const byId = new Map(subgoals.map((s) => [s.id, s]));
+    const children = new Map<string, ForgerySubgoal[]>();
+    const roots: ForgerySubgoal[] = [];
+    for (const s of subgoals) {
+      if (s.parentSubgoalId && byId.has(s.parentSubgoalId)) {
+        const kids = children.get(s.parentSubgoalId) ?? [];
+        kids.push(s);
+        children.set(s.parentSubgoalId, kids);
+      } else {
+        roots.push(s);
+      }
     }
+    let shownCount = 0;
+    const visited = new Set<string>();
+    const visit = (node: ForgerySubgoal, prefix: string, isLast: boolean): void => {
+      if (shownCount >= 10 || visited.has(node.id)) return;
+      visited.add(node.id);
+      shownCount += 1;
+      const connector = isLast ? "└─ " : "├─ ";
+      const glyph = renderStatus(theme, node.status, frame, true);
+      const bar = progressBar(node.completed, node.total, 5);
+      const progress =
+        node.total !== undefined && node.total > 0
+          ? ` ${theme.fg("dim", `${bar} ${node.completed ?? 0}/${node.total}`)}`
+          : "";
+      const current = node.current ? ` ${theme.fg("dim", truncate(node.current, 28))}` : "";
+      lines.push(
+        `${prefix}${connector}${glyph} ${theme.fg("text", theme.bold(node.name))}${progress}${current}`,
+      );
+      const kids = children.get(node.id) ?? [];
+      const kidsPrefix = prefix + (isLast ? "   " : "│  ");
+      for (let i = 0; i < kids.length; i++) {
+        if (shownCount >= 10) break;
+        visit(kids[i], kidsPrefix, i === kids.length - 1);
+      }
+    };
+    for (let i = 0; i < roots.length; i++) {
+      if (shownCount >= 10) break;
+      visit(roots[i], "", i === roots.length - 1);
+    }
+    return lines;
+  }
 
-    return this.#pad(lines, width, 24);
+  /** Events pane: reverse-chronological, scrollable timeline. */
+  #renderEvents(
+    width: number,
+    focus: ForgeryRun,
+    snap: ForgerySnapshot,
+    theme: Theme,
+  ): string[] {
+    const lines: string[] = [];
+    const events = [...focus.events]
+      .filter((e) => this.#eventPassesFilter(e))
+      .reverse()
+      .slice(0, 20);
+    if (events.length === 0) return lines;
+    lines.push(theme.fg("muted", `events (${focus.events.length})`));
+    const scroll = this.#scrollPane(
+      events.map((e) => this.#renderEventLine(e, theme, snap.now)),
+      this.rows - 4,
+    );
+    lines.push(...scroll);
+    return lines;
+  }
+
+  /** Render a single event line. */
+  #renderEventLine(event: ForgeryEvent, theme: Theme, now: number): string {
+    const time = new Date(event.createdAt).toTimeString().slice(0, 5);
+    const { glyph, color } = this.#eventGlyphColor(event.level);
+    const timePart = this.relativeTime ? this.#relativeTime(event.createdAt, now) : time;
+    return `  ${theme.fg(color, glyph)} ${theme.fg("dim", timePart)} ${theme.fg("text", event.message)}`;
+  }
+
+  /** Glyph + color for an event level. */
+  #eventGlyphColor(level: string): { glyph: string; color: ThemeColor } {
+    switch (level) {
+      case "error":
+        return { glyph: "✗", color: "error" };
+      case "success":
+        return { glyph: "✓", color: "success" };
+      case "warning":
+        return { glyph: "⚠", color: "warning" };
+      case "info":
+      default:
+        return { glyph: "▸", color: "accent" };
+    }
+  }
+
+  /** Glyph + color for an item kind. */
+  #itemGlyphColor(kind: string): { glyph: string; color: ThemeColor } {
+    switch (kind) {
+      case "tool":
+        return { glyph: "▶", color: "accent" };
+      case "agent":
+        return { glyph: "🤖", color: "muted" };
+      case "extension":
+        return { glyph: "⚙", color: "dim" };
+      case "custom":
+      default:
+        return { glyph: "•", color: "muted" };
+    }
+  }
+
+  /** Filter events by the current eventFilter. */
+  #eventPassesFilter(event: ForgeryEvent): boolean {
+    if (this.eventFilter === "all") return true;
+    if (this.eventFilter === "errors") return event.level === "error";
+    if (this.eventFilter === "agents") return event.message.includes("agent");
+    if (this.eventFilter === "phases") return event.message.includes("phase");
+    return true;
+  }
+
+  /** Items pane: deliverables/artifacts produced by the run. */
+  #renderItems(
+    width: number,
+    focus: ForgeryRun,
+    snap: ForgerySnapshot,
+    theme: Theme,
+  ): string[] {
+    const lines: string[] = [];
+    const items = focus.items;
+    if (items.length === 0) return lines;
+    lines.push(theme.fg("muted", `items (${items.length})`));
+    items.slice(0, 10).forEach((item) => {
+      const { glyph, color } = this.#itemGlyphColor(item.kind);
+      const time = item.updatedAt ? new Date(item.updatedAt).toTimeString().slice(0, 5) : "";
+      const progress =
+        item.total !== undefined && item.completed !== undefined
+          ? ` ${theme.fg("dim", `${item.completed}/${item.total}`)}`
+          : "";
+      lines.push(
+        `  ${theme.fg(color, glyph)} ${theme.fg("dim", time)} ${theme.fg("text", item.label)}${progress}`,
+      );
+    });
+    return lines;
+  }
+
+  /** Render relative time (+42s) from a timestamp. */
+  #relativeTime(createdAt: number, now: number): string {
+    const diff = now - createdAt;
+    if (diff < 0) return `+0s`;
+    const s = Math.floor(diff / 1000);
+    if (s < 60) return `+${s}s`;
+    const m = Math.floor(s / 60);
+    return `+${m}m${s % 60}s`;
+  }
+
+  /** Scroll a list of rendered lines to fit `height` rows, applying `this.scrollOffset`.
+   *  Returns the visible slice and keeps `this.scrollOffset` clamped. */
+  #scrollPane(lines: string[], height: number): string[] {
+    const maxOffset = Math.max(0, lines.length - height);
+    this.scrollOffset = Math.max(0, Math.min(this.scrollOffset, maxOffset));
+    return lines.slice(this.scrollOffset, this.scrollOffset + height);
+  }
+
+  /** Scroll the focused pane by `rows` (positive = down). */
+  scrollPage(rows: number = 1): void {
+    this.scrollOffset += rows;
+  }
+
+  /** Scroll to the top of the focused pane. */
+  scrollTop(): void {
+    this.scrollOffset = 0;
+  }
+
+  /** Scroll to the bottom of the focused pane. */
+  scrollBottom(): void {
+    this.scrollOffset = Number.MAX_SAFE_INTEGER;
   }
 
   #renderSettings(width: number): string[] {
@@ -456,3 +703,61 @@ export class ForgeryDashboard implements Component, Focusable {
     return body;
   }
 }
+
+/** A seek-safe scrolling viewport: keeps a selection visible within a fixed
+ *  number of rows, with scroll indicators. Reused by the widget transcript
+ *  (SG-22) and the dashboard panes. */
+export class ScrollView {
+  private offset = 0;
+  constructor(
+    /** Items to render. */
+    readonly items: string[],
+    /** Number of rows available. */
+    readonly height: number,
+    /** Index of the selected item. */
+    public selectedIndex = 0,
+  ) {}
+
+  /** Number of items not visible above the fold. */
+  get above(): number {
+    return Math.max(0, this.offset);
+  }
+  /** Number of items not visible below the fold. */
+  get below(): number {
+    return Math.max(0, this.items.length - this.offset - this.height);
+  }
+  /** Whether anything is scrolled above the fold. */
+  get canScrollUp(): boolean {
+    return this.offset > 0;
+  }
+  /** Whether anything is scrolled below the fold. */
+  get canScrollDown(): boolean {
+    return this.offset < Math.max(0, this.items.length - this.height);
+  }
+
+  /** Scroll so that the given index is visible, clamping the offset. */
+  reveal(index: number): void {
+    if (index < 0) index = 0;
+    if (index >= this.items.length) index = this.items.length - 1;
+    if (index < this.offset) this.offset = index;
+    else if (index >= this.offset + this.height) this.offset = index - this.height + 1;
+    this.selectedIndex = index;
+  }
+
+  /** Scroll up/down by n rows, keeping the selection visible. */
+  scrollBy(delta: number): void {
+    this.selectedIndex = Math.max(0, Math.min(this.items.length - 1, this.selectedIndex + delta));
+    this.reveal(this.selectedIndex);
+  }
+
+  /** Page up/down by roughly a page. */
+  page(delta: number): void {
+    this.scrollBy(delta * Math.max(1, this.height - 1));
+  }
+
+  /** Visible slice of items, ready to render. */
+  visible(): string[] {
+    return this.items.slice(this.offset, this.offset + this.height);
+  }
+}
+

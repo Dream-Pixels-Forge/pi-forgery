@@ -1,6 +1,6 @@
 # SG-15 — Dashboard: panels, run tabs & run summary
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/dashboard.ts`
 

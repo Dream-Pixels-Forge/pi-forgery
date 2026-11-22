@@ -108,6 +108,41 @@ test("store: agent add + update + agents() order", () => {
   assert.equal(store.agents().length, 1);
 });
 
+// ── SG-24: agent runId association ──────────────────────────────────────
+
+test("store: agentsForRun filters by runId", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.start("run-2", { name: "other" });
+  store.addAgent({ id: "a1", name: "agent-1", task: "t", status: "running", runId: "run-1", startedAt: 0, updatedAt: 0 });
+  store.addAgent({ id: "a2", name: "agent-2", task: "t", status: "running", runId: "run-2", startedAt: 0, updatedAt: 0 });
+  store.addAgent({ id: "a3", name: "agent-3", task: "t", status: "queued", runId: "run-1", startedAt: 0, updatedAt: 0 });
+
+  const run1Agents = store.agentsForRun("run-1");
+  assert.equal(run1Agents.length, 2);
+  assert.ok(run1Agents.every((a) => a.runId === "run-1"));
+  assert.equal(run1Agents.map((a) => a.id).sort().join(","), "a1,a3");
+
+  const run2Agents = store.agentsForRun("run-2");
+  assert.equal(run2Agents.length, 1);
+  assert.equal(run2Agents[0].id, "a2");
+
+  const none = store.agentsForRun("no-such-run");
+  assert.equal(none.length, 0);
+});
+
+test("store: unassignedAgents returns agents without a runId", () => {
+  const store = new ForgeryActivityStore();
+  store.addAgent({ id: "a1", name: "agent-1", task: "t", status: "running", runId: "run-1", startedAt: 0, updatedAt: 0 });
+  store.addAgent({ id: "a2", name: "agent-2", task: "t", status: "queued", startedAt: 0, updatedAt: 0 });
+  store.addAgent({ id: "a3", name: "agent-3", task: "t", status: "failed", startedAt: 0, updatedAt: 0 });
+
+  const unassigned = store.unassignedAgents();
+  assert.equal(unassigned.length, 2);
+  assert.ok(unassigned.every((a) => a.runId === undefined));
+  assert.equal(unassigned.map((a) => a.id).sort().join(","), "a2,a3");
+});
+
 test("store: updateAgent with an unchanged patch does not bump the revision", () => {
   const store = new ForgeryActivityStore();
   const agent = {
