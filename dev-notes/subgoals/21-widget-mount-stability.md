@@ -1,6 +1,6 @@
 # SG-21 — Widget mount stability (mount once, render many)
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `extensions/forgery/src/ui/controller.ts`, `extensions/forgery/src/ui/widget.ts`
 

@@ -4,7 +4,15 @@
  * trivially unit-testable and usable from both TUI components and CLI.
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type {
+  ForgeryAgentRecord,
+  ForgeryActivityStatus,
+  ForgeryRunStatus,
+  ForgerySnapshot,
+  ForgerySubgoal,
+} from "../activity/types";
+import { sliceByColumn, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** 1234 → "1.2k", 123000 → "123k", 1000000 → "1M", <1000 → raw digits. */
 export function formatTokens(count: number | null | undefined): string {
@@ -19,10 +27,57 @@ export function formatTokens(count: number | null | undefined): string {
 /** Braille spinner frames cycled to animate a "working" run/agent. */
 export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/** Every status value rendered across widget, footer, dashboard and status string. */
+export type UiStatus =
+  | ForgeryAgentRecord["status"]
+  | ForgerySubgoal["status"]
+  | ForgeryRunStatus
+  | ForgeryActivityStatus;
+
+/**
+ * Single source of truth for status glyph + color. `satisfies` makes adding a
+ * new status to the unions a compile error until it is styled here.
+ */
+export const STATUS_STYLE = {
+  queued: { glyph: "○", token: "dim" },
+  pending: { glyph: "○", token: "muted" },
+  running: { glyph: "⠋", token: "accent", animated: true },
+  blocked: { glyph: "⊘", token: "warning" },
+  completed: { glyph: "✓", token: "success" },
+  failed: { glyph: "✗", token: "error" },
+  timed_out: { glyph: "⏱", token: "error" },
+  cancelled: { glyph: "■", token: "muted" },
+  stopped: { glyph: "⏹", token: "muted" },
+  unavailable: { glyph: "⚠", token: "warning" },
+} as const satisfies Record<
+  UiStatus,
+  { glyph: string; token: ThemeColor; animated?: boolean }
+>;
+
+/** Frame index for the running spinner at wall-clock time `now` (80 ms per frame). */
+export function frameAt(now: number): number {
+  return Math.floor(now / 80) % SPINNER_FRAMES.length;
+}
+
+/** Colored status glyph, animated when the status is "running" and animations are on. */
+export function renderStatus(
+  theme: Theme,
+  status: UiStatus,
+  frameIndex: number,
+  animated = true,
+): string {
+  const style = STATUS_STYLE[status];
+  const glyph =
+    status === "running" && animated
+      ? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
+      : style.glyph;
+  return theme.fg(style.token, glyph);
+}
+
 /** Animated status glyph: running → next spinner frame, else the static glyph. */
-export function animatedStatusGlyph(status: string, frameIndex: number): string {
+export function animatedStatusGlyph(status: UiStatus, frameIndex: number): string {
   if (status === "running") return SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length];
-  return statusGlyph(status);
+  return STATUS_STYLE[status].glyph;
 }
 
 /** Format a dollar amount. Undefined/0 → "—". */
@@ -45,17 +100,138 @@ export function formatDuration(ms: number | null | undefined): string {
   return m % 60 > 0 ? `${h}h${m % 60}m` : `${h}h`;
 }
 
+/** Elapsed time for an agent: frozen at finishedAt when done, else now - startedAt. */
+export function agentElapsed(
+  agent: Pick<ForgeryAgentRecord, "startedAt" | "finishedAt">,
+  now: number,
+): number | undefined {
+  if (!agent.startedAt) return undefined;
+  return (agent.finishedAt ?? now) - agent.startedAt;
+}
+
 /** Context usage percent → "42%" or "—". */
 export function formatPercent(p: number | null | undefined): string {
   if (p === null || p === undefined) return "—";
   return `${Math.round(p)}%`;
 }
 
+/** Mini progress bar: "▰▰▰▱▱" for completed/total over `cells` cells. Empty when total is 0/undefined. */
+export function progressBar(
+  completed: number | undefined,
+  total: number | undefined,
+  cells = 5,
+): string {
+  if (!total || total <= 0) return "";
+  const ratio = Math.min(1, Math.max(0, completed ?? 0) / total);
+  const filled = Math.round(ratio * cells);
+  const empty = cells - filled;
+  return "▰".repeat(filled) + "▱".repeat(empty);
+}
+
+/** Effort as a 3-dot meter: `●○○` low, `●●○` medium, `●●●` high.
+ *  Unknown effort values render nothing. */
+export function effortMeter(effort: string | null | undefined): string {
+  if (effort === null || effort === undefined) return "";
+  switch (effort) {
+    case "low":
+      return "●○○";
+    case "medium":
+      return "●●○";
+    case "high":
+      return "●●●";
+    default:
+      return "";
+  }
+}
+
+/** Shorten a model id: strip date suffix, replace hyphens with spaces. */
+export function shortModel(modelId: string): string {
+  let name = modelId.includes("/") ? modelId.split("/").pop() ?? modelId : modelId;
+  name = name.replace(/(?:-)?\d{8}$/, ""); // drop vendor date suffix
+  return name.replace(/-/g, " ");
+}
+
+/** Render one agent as aligned columns: glyph · name · activity · calls · tokens · time.
+ *  Columns drop right-to-left (time → tokens → calls) as width shrinks. */
+export function agentRowCols(
+  theme: Theme,
+  agent: ForgeryAgentRecord,
+  width: number,
+  frame: number,
+  opts: {
+    /** Tree indent depth (0 = root). */
+    depth?: number;
+    /** Show the selection gutter marker. */
+    selected?: boolean;
+    /** Spinners on/off. */
+    animations?: boolean;
+    /** Clock for elapsed time. */
+    clock?: () => number;
+  } = {},
+): string {
+  const { depth = 0, selected = false, animations = true, clock = Date.now } = opts;
+  const glyph =
+    agent.status === "running"
+      ? renderStatus(theme, agent.status, frame, animations)
+      : colorStatus(theme, agent.status);
+  const gutter = selected ? theme.fg("accent", "▌") : " ";
+  const indent = depth > 0 ? `${"  ".repeat(depth - 1)}└─ ` : "";
+  const name = `${indent}${agent.name}`;
+  const current = agent.current ? ` ${oneLine(agent.current)}` : "";
+  const activity = theme.fg("dim", truncate(current, 44));
+  const elapsed = agentElapsed(agent, clock());
+  const time = elapsed !== undefined ? formatDuration(elapsed) : "—";
+  const calls = String(agent.toolCalls ?? 0);
+  const tokens = agent.usage?.output !== undefined ? formatTokens(agent.usage.output) : "—";
+
+  const glyphW = 2;
+  const nameW = Math.min(12, Math.max(4, name.length));
+  const callsW = 5;
+  const tokensW = 7;
+  const timeW = 6;
+  const gap = 1;
+
+  const tryCols = (
+    keepTime: boolean,
+    keepTokens: boolean,
+    keepCalls: boolean,
+  ): string | null => {
+    const cells: Array<{ text: string; width: number; align?: "left" | "right" }> = [
+      { text: glyph, width: glyphW },
+      { text: name, width: nameW },
+      { text: activity, width: 1 }, // flex placeholder
+    ];
+    if (keepCalls) cells.push({ text: calls, width: callsW, align: "right" });
+    if (keepTokens) cells.push({ text: tokens, width: tokensW, align: "right" });
+    if (keepTime) cells.push({ text: time, width: timeW, align: "right" });
+    const fixedWidth =
+      cells.reduce((s, c) => s + c.width, 0) + gap * Math.max(0, cells.length - 1);
+    const activityW = width - fixedWidth;
+    if (activityW < 3) return null;
+    cells[2].width = activityW;
+    return cols(cells, gap);
+  };
+
+  const row =
+    tryCols(true, true, true) ??
+    tryCols(false, true, true) ??
+    tryCols(false, false, true) ??
+    tryCols(false, false, false) ??
+    cols([{ text: glyph, width: glyphW }, { text: name, width: nameW }], gap);
+
+  const content = fit(row, width - 2);
+  const out = `${gutter} ${content}`;
+  if (agent.status === "completed") {
+    return theme.fg("muted", out);
+  }
+  return out;
+}
+
 /** Strip control characters and collapse whitespace for safe terminal display. */
 export function safeText(value: unknown): string {
   if (value === null || value === undefined) return "";
   const s = typeof value === "string" ? value : safeJson(value);
-  return s.replace(/[\u0000-\u001F]/g, "");
+  return oneLine(s);
 }
 
 /** Render an object as compact JSON, falling back to String(value). */
@@ -70,15 +246,53 @@ export function safeJson(value: unknown): string {
   }
 }
 
-/** Single-line: whitespace collapsed, trimmed. */
+/** Single-line: strip control chars, collapse whitespace, trim. */
 export function oneLine(value: string | undefined): string {
-  return (value ?? "").replace(/\s+/g, " ").trim();
+  return (value ?? "").replace(/[\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-/** Truncate to N chars with an ellipsis. */
-export function truncate(text: string, n: number): string {
-  if (text.length <= n) return text;
-  return `${text.slice(0, Math.max(0, n - 1))}…`;
+/** Width alias so UI code reads `vw(text)` instead of `visibleWidth(text)`. */
+export const vw = visibleWidth;
+
+/** Truncate to fit within `width` visible columns, never splitting ANSI. */
+export function fit(text: string, width: number, ellipsis = "…"): string {
+  if (visibleWidth(text) <= width) return text;
+  const keep = Math.max(0, width - visibleWidth(ellipsis));
+  return sliceByColumn(text, 0, keep, true) + ellipsis;
+}
+
+/** Pad `text` on the right to `width` visible columns. */
+export function padEnd(text: string, width: number): string {
+  const pad = Math.max(0, width - vw(text));
+  return text + " ".repeat(pad);
+}
+
+/** Pad `text` on the left to `width` visible columns. */
+export function padStart(text: string, width: number): string {
+  const pad = Math.max(0, width - vw(text));
+  return " ".repeat(pad) + text;
+}
+
+/** Truncate to fit within `width` visible columns, never splitting ANSI. */
+export function truncate(text: string, width: number): string {
+  return fit(text, width);
+}
+
+/**
+ * Render a fixed column grid. Each cell is truncated/padded to its column
+ * width; metric columns are right-aligned. `gap` is the space between cells.
+ */
+export function cols(
+  cells: Array<{ text: string; width: number; align?: "left" | "right" }>,
+  gap = 1,
+): string {
+  const sep = " ".repeat(gap);
+  return cells
+    .map((cell) => {
+      const content = fit(cell.text, cell.width);
+      return cell.align === "right" ? padStart(content, cell.width) : padEnd(content, cell.width);
+    })
+    .join(sep);
 }
 
 /**
@@ -91,39 +305,106 @@ export function statusLine(parts: Array<string | undefined>): string {
 
 // ── theme-colored helpers (only used by TUI components) ─────────────────
 
-/** Status glyph + color for an activity/run status. */
-export function statusGlyph(status: string): string {
-  switch (status) {
-    case "running":
-      return "◐";
-    case "completed":
-      return "✓";
-    case "failed":
-      return "✗";
-    case "cancelled":
-    case "stopped":
-      return "■";
-    default:
-      return "·";
-  }
+/** Status glyph for an activity/run status (uncolored, for plain-text surfaces). */
+export function statusGlyph(status: UiStatus): string {
+  return STATUS_STYLE[status].glyph;
 }
 
-/** Colored status glyph using a pi-coding-agent Theme. */
-export function colorStatus(theme: Theme, status: string): string {
-  const g = statusGlyph(status);
-  switch (status) {
-    case "running":
-      return theme.fg("accent", g);
-    case "completed":
-      return theme.fg("success", g);
-    case "failed":
-      return theme.fg("error", g);
-    case "cancelled":
-    case "stopped":
-      return theme.fg("warning", g);
-    default:
-      return theme.fg("dim", g);
+/** Colored status glyph using a pi-coding-agent Theme (static, no animation). */
+export function colorStatus(theme: Theme, status: UiStatus): string {
+  const style = STATUS_STYLE[status];
+  return theme.fg(style.token, style.glyph);
+}
+
+/** Single source of truth for the status line / widget title text.
+ * Pure in the snapshot + clock — no theme, no side effects. Every surface
+ * (status bar, footer run segment, widget title) renders from this summary.
+ */
+export interface StatusSummary {
+  /** Whether a run/agent is currently active. */
+  active: boolean;
+  /** Uncolored status glyph. */
+  glyph: string;
+  /** Run name, or "forgery" when idle/recent. */
+  label: string;
+  /** Call count, if any. */
+  calls: number | undefined;
+  /** Token count, if any. */
+  tokens: number | undefined;
+  /** Cost, if any. */
+  cost: number | undefined;
+  /** Elapsed ms, if a run is active. */
+  elapsed: number | undefined;
+  /** Subgoal completed/total, if any subgoals exist. */
+  subgoal?: { completed: number; total: number };
+  /** Raw status string of the active/recent run. */
+  status: string;
+}
+
+/** Build a status summary purely from the activity snapshot and clock. */
+export function summarizeStatus(
+  snap: ForgerySnapshot,
+  clock: () => number,
+): StatusSummary {
+  const active = snap.runs.find((r) => r.status === "running");
+  if (active) {
+    const totals = snap.activeTotals;
+    const st = snap.subgoalTotals;
+    return {
+      active: true,
+      glyph: statusGlyph("running"),
+      label: active.name,
+      calls: totals?.calls,
+      tokens: totals?.tokens,
+      cost: totals?.cost,
+      elapsed: active.startedAt ? clock() - active.startedAt : undefined,
+      subgoal: st && st.total > 0 ? { completed: st.completed, total: st.total } : undefined,
+      status: active.status,
+    };
   }
+  const recent = snap.runs[0];
+  if (recent) {
+    return {
+      active: false,
+      glyph: statusGlyph(recent.status),
+      label: recent.name,
+      calls: undefined,
+      tokens: undefined,
+      cost: undefined,
+      elapsed: undefined,
+      status: recent.status,
+    };
+  }
+  return {
+    active: false,
+    glyph: "",
+    label: "forgery",
+    calls: undefined,
+    tokens: undefined,
+    cost: undefined,
+    elapsed: undefined,
+    status: "",
+  };
+}
+
+/** Compact status string from a summary.
+ *  e.g. "⠹ forgery 2/5 · 1m12s" or "✓ forgery done · $0.42". Empty when idle. */
+export function formatStatusSummary(summary: StatusSummary): string {
+  if (!summary.active) {
+    if (!summary.status) return "forgery · idle";
+    return statusLine([`${summary.glyph} ${summary.label} ${summary.status}`]);
+  }
+  const parts: Array<string | undefined> = [
+    `${summary.glyph} ${summary.label}`,
+    summary.calls !== undefined ? `${summary.calls} calls` : undefined,
+    summary.tokens !== undefined ? `${formatTokens(summary.tokens)} tok` : undefined,
+    summary.cost !== undefined ? formatCost(summary.cost) : undefined,
+    summary.elapsed !== undefined ? formatDuration(summary.elapsed) : undefined,
+  ];
+  if (summary.subgoal) {
+    parts.push(`subgoals ${summary.subgoal.completed}/${summary.subgoal.total}`);
+  }
+  return statusLine(parts.filter(Boolean));
 }
 
 /** Colored, truncated, single-line label. */
@@ -142,16 +423,16 @@ const BOX = {
   v: "│",
 };
 
-/** Wrap lines in a box-drawing border. Returns the boxed lines. */
+/** Wrap lines in a width-aware box-drawing border. Returns the boxed lines. */
 export function box(lines: string[], title?: string): string[] {
   if (lines.length === 0) return [];
   const pad = title ? 2 : 0;
-  const contentWidth = Math.max(...lines.map((l) => visibleLength(l)));
+  const contentWidth = Math.max(...lines.map((l) => vw(l)));
   const width = contentWidth + pad + 4; // 2 for borders + 2 for inner padding
 
   let top: string;
   if (title) {
-    const titleLen = visibleLength(title);
+    const titleLen = vw(title);
     const innerWidth = width - 4; // space between borders
     const available = innerWidth - titleLen - 2; // 2 for spaces around title
     const left = Math.max(0, Math.floor(available / 2));
@@ -160,24 +441,65 @@ export function box(lines: string[], title?: string): string[] {
   } else {
     top = BOX.tl + BOX.h.repeat(width - 2) + BOX.tr;
   }
-  const body = lines.map((l) => BOX.v + " " + padRight(l, width - 4) + " " + BOX.v);
+  const body = lines.map((l) => BOX.v + " " + padEnd(l, width - 4) + " " + BOX.v);
   const bottom = BOX.bl + BOX.h.repeat(width - 2) + BOX.br;
   return [top, ...body, bottom];
 }
 
-/** Pad a string to a target visible width. */
-function padRight(s: string, width: number): string {
-  const visible = visibleLength(s);
-  return s + " ".repeat(Math.max(0, width - visible));
+const PANEL = {
+  tl: "╭",
+  tr: "╮",
+  bl: "╰",
+  br: "╯",
+  h: "─",
+  v: "│",
+};
+
+/** Wrap lines in a rounded, width-aware panel with optional top title and bottom hint. */
+export function panel(
+  lines: string[],
+  opts: { title?: string; bottom?: string } = {},
+): string[] {
+  const hasContent = lines.length > 0 || !!opts.title || !!opts.bottom;
+  if (!hasContent) return [];
+  const contentWidth = Math.max(...lines.map((l) => vw(l)));
+  const titleW = opts.title ? vw(opts.title) + 2 : 0;
+  const bottomW = opts.bottom ? vw(opts.bottom) + 2 : 0;
+  const width = Math.max(contentWidth, titleW, bottomW) + 4; // 2 borders + 2 padding
+
+  const inner = width - 4;
+  const top = opts.title
+    ? borderedTitle(PANEL, opts.title, inner, width)
+    : PANEL.tl + PANEL.h.repeat(width - 2) + PANEL.tr;
+
+  const body = lines.map((l) => PANEL.v + " " + padEnd(l, width - 4) + " " + PANEL.v);
+  const btm = opts.bottom
+    ? borderedTitle(PANEL, opts.bottom, inner, width)
+    : PANEL.bl + PANEL.h.repeat(width - 2) + PANEL.br;
+  return [top, ...body, btm];
 }
 
-/** Measure visible string length (strip ANSI-ish color tags from our Theme stub). */
-export function visibleLength(s: string): number {
-  return s.replace(/\[[a-z]+\]/g, "").replace(/\u001b\[[0-9;]*m/g, "").length;
+/** Build a border line with a centered title (reused by box and panel). */
+function borderedTitle(
+  corners: { tl: string; tr: string; bl: string; br: string; h: string; v: string },
+  title: string,
+  inner: number,
+  width: number,
+): string {
+  const titleLen = vw(title);
+  const available = inner - titleLen - 2; // 2 for spaces around title
+  const left = Math.max(0, Math.floor(available / 2));
+  const right = Math.max(0, available - left);
+  return `${corners.tl}${corners.h.repeat(left)} ${title} ${corners.h.repeat(right)}${corners.tr}`;
 }
 
 /** Format a single call's summary line for display. */
-export function formatCallSummary(ref: string, status: string, durationMs: number | undefined, metrics?: { tokens?: number; cost?: number }): string {
+export function formatCallSummary(
+  ref: string,
+  status: UiStatus,
+  durationMs: number | undefined,
+  metrics?: { tokens?: number; cost?: number },
+): string {
   const glyph = statusGlyph(status);
   const dur = durationMs !== undefined ? ` ${formatDuration(durationMs)}` : "";
   const tok = metrics?.tokens !== undefined ? ` ${formatTokens(metrics.tokens)} tok` : "";

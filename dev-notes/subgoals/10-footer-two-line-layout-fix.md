@@ -1,6 +1,6 @@
 # SG-10 — Footer: fix two-line layout
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/footer.ts`
 

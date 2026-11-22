@@ -1,6 +1,6 @@
 # SG-14 — Time-based spinner clock
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0
 - **Area:** `src/ui/format.ts`, `src/ui/widget.ts`, `src/ui/footer.ts`, `src/ui/controller.ts`
 

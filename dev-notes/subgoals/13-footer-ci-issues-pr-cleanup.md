@@ -1,6 +1,6 @@
 # SG-13 — Footer: CI / issues / PR segment cleanup
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P2
 - **Area:** `src/ui/footer.ts`
 

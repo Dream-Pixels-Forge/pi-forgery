@@ -1,6 +1,6 @@
 # SG-03 — Widget "card" layout with clear hierarchy
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/widget.ts`
 

@@ -1,6 +1,6 @@
 # SG-11 — Footer: context gauge with thresholds
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/footer.ts`, `src/ui/format.ts`
 

@@ -1,6 +1,6 @@
 # SG-04 — Agent rows with aligned columns & metrics
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/widget.ts`, `src/ui/dashboard.ts`
 

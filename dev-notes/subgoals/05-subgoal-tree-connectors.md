@@ -1,6 +1,6 @@
 # SG-05 — Subgoal tree with connectors & progress bars
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/widget.ts`, `src/ui/dashboard.ts`
 

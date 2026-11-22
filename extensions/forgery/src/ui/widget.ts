@@ -11,15 +11,21 @@
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable } from "@earendil-works/pi-tui";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { ForgeryAgentRecord, ForgerySnapshot, ForgerySubgoal } from "../activity/types";
 import {
-  animatedStatusGlyph,
+  agentRowCols,
+  cols,
   colorSafe,
   colorStatus,
+  frameAt,
+  fit,
   formatCost,
   formatDuration,
   formatTokens,
+  oneLine,
+  panel,
+  progressBar,
+  renderStatus,
   safeText,
   statusGlyph,
   truncate,
@@ -53,16 +59,31 @@ export class ForgeryWidget implements Component, Focusable {
   expandedId?: string;
   /** Scroll lines back from the newest transcript line. */
   scroll = 0;
-  /** Last rendered row count, used to detect "changed" for invalidation. */
-  #lastRows = 0;
-  /** Frame counter used to animate the "working" spinner while a run is active. */
-  #frame = 0;
+  /** The last rendered line array, hashed by `hasChanged()` to detect content changes. */
+  #lastRendered: string[] = [];
+  /** Width used by the last `render()` call, so `hasChanged()` compares at the same width. */
+  #lastRenderWidth = 0;
+  /** Whether spinners and transitions are animated. */
+  #animations: boolean;
+  /** Index into the last-rendered selectable rows (-1 = none). */
+  selectedIndex = -1;
+  /** The flat list of selectable rows from the last render, for handleInput. */
+  #selectableRows: { id: string; type: "run" | "agent" | "subgoal" }[] = [];
+  /** Whether the widget is currently visible (mounted but hidden internally, SG-21). */
+  #visible = true;
+  /** Whether the rendered content changed since last render (SG-21). */
+  #dirty = true;
+  /** Whether the rendered content changed since last render (SG-21). */
+  get dirty(): boolean {
+    return this.#dirty;
+  }
 
   private theme: () => Theme;
   private snapshot: () => ForgerySnapshot;
   private maxRows: number;
   private retention?: ForgeryWidgetRetention;
   private interaction?: ForgeryWidgetInteraction;
+  private clock: () => number;
 
   constructor(
     theme: () => Theme,
@@ -70,12 +91,55 @@ export class ForgeryWidget implements Component, Focusable {
     maxRows = 8,
     retention?: ForgeryWidgetRetention,
     interaction?: ForgeryWidgetInteraction,
+    animations = true,
+    clock = Date.now,
   ) {
     this.theme = theme;
     this.snapshot = snapshot;
     this.maxRows = maxRows;
     this.retention = retention;
     this.interaction = interaction;
+    this.#animations = animations;
+    this.clock = clock;
+  }
+
+  /** Show/hide the widget without mounting/unmounting (SG-21). */
+  setVisible(v: boolean): void {
+    this.#visible = v;
+    if (v) this.#dirty = true;
+  }
+
+  /** Mark dirty if the snapshot's rendered content changed (SG-07 + SG-21). */
+  update(snap: ForgerySnapshot): void {
+    this.#dirty = this.#contentChanged(snap, this.#lastRenderWidth || this.#terminalWidth());
+  }
+
+  /** Build the selectable-row list and clamp the selection; returns the selected id. */
+  #buildSelectableRows(snap: ForgerySnapshot): string | undefined {
+    this.#selectableRows = [];
+    const active = snap.runs.find((r) => r.status === "running");
+    if (active) this.#selectableRows.push({ id: `run:${active.name}`, type: "run" });
+    for (const a of snap.agents) this.#selectableRows.push({ id: a.id, type: "agent" });
+    if (active) for (const s of active.subgoals) this.#selectableRows.push({ id: s.id, type: "subgoal" });
+    // Clamp selection when rows disappear.
+    if (this.selectedIndex >= this.#selectableRows.length) this.selectedIndex = -1;
+    return this.#selectableRows[this.selectedIndex]?.id;
+  }
+
+  /** Whether the rendered content changed vs the last render (at terminal width). */
+  #contentChanged(snap: ForgerySnapshot, width: number = this.#terminalWidth()): boolean {
+    const theme = this.theme();
+    const active = snap.runs.find((r) => r.status === "running");
+    const frame = frameAt(this.clock());
+    const maxRows = active
+      ? Math.max(
+          2,
+          Math.min(this.maxRows, Math.floor((process.stdout.rows ?? 40) * WIDGET_TERMINAL_ROW_SHARE)),
+        )
+      : 1;
+    const selectedId = this.#buildSelectableRows(snap);
+    const lines = this.#cardLines(theme, snap, active, width, frame, maxRows, selectedId);
+    return this.#linesHash(lines) !== this.#lastRenderedHash;
   }
 
   /** Whether the widget should be visible right now. */
@@ -88,38 +152,61 @@ export class ForgeryWidget implements Component, Focusable {
   }
 
   invalidate(): void {
-    this.#lastRows = 0;
+    this.#lastRendered = [];
+    this.#lastRenderedHash = "";
+    this.#dirty = true;
   }
 
   hasChanged(): boolean {
-    const snap = this.snapshot();
-    const active = snap.runs.find((r) => r.status === "running");
-    const rows = active ? 2 : 1;
-    return this.#lastRows !== rows;
+    return this.#contentChanged(this.snapshot(), this.#lastRenderWidth || this.#terminalWidth());
+  }
+
+  /** Hash of the last rendered lines (updated by render/render). */
+  #lastRenderedHash = "";
+
+  #terminalWidth(): number {
+    return Math.max(20, process.stdout.columns ?? 80);
+  }
+
+  #linesHash(lines: string[]): string {
+    return JSON.stringify(lines);
   }
 
   handleInput(data: string): void {
+    // Any input that moves selection or toggle expand dirties the render.
+    this.#dirty = true;
     switch (data) {
-      case "\u001b": // escape — release focus, collapse expanded
-        this.expandedId = undefined;
-        this.scroll = 0;
-        this.interaction?.release();
+      case "\u001b": // escape — collapse expanded, or release focus back to the editor
+        if (this.expandedId) {
+          this.expandedId = undefined;
+          this.scroll = 0;
+        } else {
+          this.interaction?.release();
+        }
         this.interaction?.requestRender();
         break;
       case "\r":
-      case "\n":
-        // Enter expands the focused participant.
+      case "\n": // Enter — toggle expand on the selected row
         this.scroll = 0;
+        const selected = this.#selectableRows[this.selectedIndex];
+        if (selected) {
+          this.expandedId = this.expandedId === selected.id ? undefined : selected.id;
+        }
         this.interaction?.requestRender();
         break;
       case "\u001b[A": // up
       case "k":
-        this.scroll = Math.max(0, this.scroll - 1);
+        this.scroll = 0;
+        this.selectedIndex = Math.max(0, this.selectedIndex - 1);
         this.interaction?.requestRender();
         break;
       case "\u001b[B": // down
       case "j":
-        this.scroll = this.scroll + 1;
+        this.scroll = 0;
+        this.selectedIndex = Math.min(
+          this.#selectableRows.length - 1,
+          this.selectedIndex + 1,
+        );
         this.interaction?.requestRender();
         break;
     }
@@ -129,40 +216,99 @@ export class ForgeryWidget implements Component, Focusable {
     const snap = this.snapshot();
     const theme = this.theme();
     const active = snap.runs.find((r) => r.status === "running");
-    const maxRows = Math.max(2, Math.min(this.maxRows, Math.floor((process.stdout.rows ?? 40) * WIDGET_TERMINAL_ROW_SHARE)));
+    const maxRows = active
+      ? Math.max(
+          2,
+          Math.min(this.maxRows, Math.floor((process.stdout.rows ?? 40) * WIDGET_TERMINAL_ROW_SHARE)),
+        )
+      : 1;
+    const frame = frameAt(this.clock());
+    // Always build the selectable-row model so handleInput works even while
+    // hidden; only render output when visible (SG-21).
+    const selectedId = this.#buildSelectableRows(snap);
+    if (!this.#visible) {
+      this.#lastRendered = [];
+      return [];
+    }
+    if (!this.#dirty) return this.#lastRendered;
 
+    const lines = this.#cardLines(
+      theme,
+      snap,
+      active,
+      width,
+      frame,
+      maxRows,
+      selectedId,
+    );
+    this.#lastRenderWidth = width;
+    this.#lastRenderedHash = this.#linesHash(lines);
+    this.#lastRendered = lines;
+    this.#dirty = false;
+    return lines;
+  }
+
+  /** Build the card (bordered when a run is active, plain idle line otherwise). */
+  #cardLines(
+    theme: Theme,
+    snap: ForgerySnapshot,
+    active: { name: string; startedAt: number; subgoals: ForgerySubgoal[] } | undefined,
+    width: number,
+    frame: number,
+    maxRows: number,
+    selectedId?: string,
+  ): string[] {
     if (!active) {
-      this.#lastRows = 1;
       return [this.#idleLine(theme, width, snap)];
     }
+    // Below 40 columns: drop borders, render flat lines that still fit.
+    if (width < 40) {
+      const flat = this.#cardBody(theme, snap, active, width, frame, maxRows, selectedId);
+      return flat.map((l) => fit(l, width));
+    }
+    const header = this.#headerLine(theme, snap, active, width - 4, frame);
+    const body = this.#cardBody(theme, snap, active, width - 4, frame, maxRows - 2, selectedId);
+    const hint = this.focused
+      ? fit(theme.fg("muted", `  ↑↓ select · ⏎ expand · esc back`), width - 4)
+      : undefined;
+    return panel(body, { title: header, bottom: hint });
+  }
 
-    // Advance the spinner frame on every render while a run is active.
-    this.#frame += 1;
-
-    // Header line.
-    const header = this.#headerLine(theme, snap, active, width, this.#frame);
-
-    // Participant rows (active agents).
-    const agents = this.#participantRows(theme, snap, width, Math.max(0, maxRows - 1 - (this.expandedId ? 0 : 0)), this.#frame);
-
-    // Subgoal rows (subgoals of the active run).
-    const subgoals = this.#subgoalRows(theme, snap, active, width, this.#frame);
-
-    // Expanded transcript pane.
-    if (this.expandedId) {
-      const lines = this.interaction?.activity(this.expandedId, this.scroll) ?? [];
-      if (lines.length > 0) {
-        const divider = theme.fg("border", `── ${theme.bold(this.expandedId)} ──`);
-        const body = lines.slice(0, FORGERY_WIDGET_ACTIVITY_ROWS).map((l) => truncateToWidth(l, width));
-        const pad = Math.max(0, FORGERY_WIDGET_ACTIVITY_ROWS - body.length);
-        const withPadding = [...body, ...Array(pad).fill("")];
-        this.#lastRows = 1 + agents.length + subgoals.length + 1 + withPadding.length + 1;
-        return [header, ...agents, ...subgoals, divider, ...withPadding, theme.fg("border", "─".repeat(width))];
+  /** Body lines of the card: agent rows then subgoal rows, bounded by maxRows. */
+  #cardBody(
+    theme: Theme,
+    snap: ForgerySnapshot,
+    active: { name: string; startedAt: number; subgoals: ForgerySubgoal[] },
+    width: number,
+    frame: number,
+    maxRows: number,
+    selectedId?: string,
+  ): string[] {
+    const lines: string[] = [];
+    let remaining = maxRows;
+    // Hint footer takes a row when focused; reserve it first.
+    if (this.focused) remaining -= 1;
+    const agentRows = this.#agentRows(theme, snap, width, frame, remaining, selectedId);
+    if (agentRows.rows.length > 0) {
+      lines.push(...agentRows.rows);
+      remaining -= agentRows.rows.length;
+      if (agentRows.more > 0 && remaining > 0) {
+        lines.push(fit(theme.fg("muted", `  … +${agentRows.more} more (⏎ dashboard)`), width));
+        remaining -= 1;
       }
     }
-
-    this.#lastRows = 1 + agents.length + subgoals.length;
-    return [header, ...agents, ...subgoals];
+    if (remaining > 0) {
+      const subgoalRows = this.#subgoalRows(theme, snap, active, width, frame, remaining, selectedId);
+      if (subgoalRows.rows.length > 0) {
+        lines.push(...subgoalRows.rows);
+        remaining -= subgoalRows.rows.length;
+      }
+      if (subgoalRows.more > 0 && remaining > 0) {
+        lines.push(fit(theme.fg("muted", `  … +${subgoalRows.more} more subgoals`), width));
+        remaining -= 1;
+      }
+    }
+    return lines;
   }
 
   // ── render pieces ──────────────────────────────────────────────────────
@@ -172,9 +318,12 @@ export class ForgeryWidget implements Component, Focusable {
     if (recent) {
       const glyph = colorStatus(theme, recent.status);
       const detail = recent.error ? ` ${safeText(truncate(recent.error, 30))}` : "";
-      return ` ${glyph} ${theme.fg("muted", `forgery · ${recent.name} · ${recent.status}`)}${detail}`.slice(0, width);
+      return fit(
+        ` ${glyph} ${theme.fg("muted", `forgery · ${recent.name} · ${recent.status}`)}${detail}`,
+        width,
+      );
     }
-    return ` ${theme.fg("dim", "forgery · idle")}`.slice(0, width);
+    return fit(` ${theme.fg("dim", "forgery · idle")}`, width);
   }
 
   #headerLine(
@@ -190,28 +339,64 @@ export class ForgeryWidget implements Component, Focusable {
     const calls = totals ? ` ${totals.calls} calls` : "";
     const dur = active.startedAt ? ` ${formatDuration(snap.now - active.startedAt)}` : "";
     // Animated spinner while working; colored accent so "running" stands out.
-    const glyph = theme.fg("accent", animatedStatusGlyph("running", frame));
+    const glyph = renderStatus(theme, "running", frame, this.#animations);
     const line = ` ${glyph} ${theme.fg("text", theme.bold("forgery"))} ${theme.fg("muted", active.name)} ·${calls}${tokens}${cost}${dur}`;
-    return truncateToWidth(line, width, "…");
+    return fit(line, width);
   }
 
-  #participantRows(
+  #agentRows(
     theme: Theme,
     snap: ForgerySnapshot,
     width: number,
-    max: number,
     frame: number,
-  ): string[] {
-    const rows: string[] = [];
+    max: number,
+    selectedId?: string,
+  ): { rows: string[]; more: number } {
     // Build a parent→child tree so subagents render nested under their parent.
     const tree = this.#buildAgentTree(snap.agents);
     // Show only running/recent agents (top-level + their subagents), depth-first.
     const visible = tree.filter(({ agent }) => agent.status !== "completed" || agent.current);
-    const agentRows = visible
-      .slice(0, max > 0 ? max : visible.length)
-      .map(({ agent, depth }) => this.#agentRow(theme, agent, width, frame, depth));
-    rows.push(...agentRows);
-    return rows.slice(0, max > 0 ? max : rows.length);
+    // Order: running → blocked/queued → failed → completed, most recent first within a group.
+    const rank = (a: ForgeryAgentRecord): number => {
+      switch (a.status) {
+        case "running":
+          return 0;
+        case "queued":
+          return 1;
+        case "failed":
+          return 2;
+        default:
+          return 3;
+      }
+    };
+    const ordered = [...visible].sort(
+      (a, b) => rank(a.agent) - rank(b.agent) || b.agent.updatedAt - a.agent.updatedAt,
+    );
+    const total = ordered.length;
+    const shown = ordered.slice(0, max > 0 ? max : ordered.length);
+    const rows = shown.map(({ agent, depth }) =>
+      this.#agentRowCols(theme, agent, width, frame, depth, ordered.length, agent.id === selectedId),
+    );
+    const more = Math.max(0, total - shown.length);
+    return { rows, more };
+  }
+
+  /** Render one agent as aligned columns: glyph · name · activity · calls · tokens · time. */
+  #agentRowCols(
+    theme: Theme,
+    agent: ForgeryAgentRecord,
+    width: number,
+    frame: number,
+    depth: number,
+    _totalAgents: number,
+    selected = false,
+  ): string {
+    return agentRowCols(theme, agent, width, frame, {
+      depth,
+      selected,
+      animations: this.#animations,
+      clock: () => this.clock(),
+    });
   }
 
   /** Build a depth-first agent tree from the flat agent list, using parentId. */
@@ -240,53 +425,70 @@ export class ForgeryWidget implements Component, Focusable {
     return result;
   }
 
-  #agentRow(
-    theme: Theme,
-    agent: ForgeryAgentRecord,
-    width: number,
-    frame: number,
-    depth: number,
-  ): string {
-    // Running agents get the animated spinner; everything else keeps a static glyph.
-    const glyph =
-      agent.status === "running"
-        ? theme.fg("accent", animatedStatusGlyph("running", frame))
-        : colorStatus(theme, agent.status);
-    const indent = depth > 0 ? `${"  ".repeat(depth - 1)}└─ ` : "";
-    const current = agent.current ? ` ${theme.fg("dim", truncate(agent.current, 40))}` : "";
-    const line = `  ${indent}${glyph} ${theme.fg("text", theme.bold(agent.name))}${current}`;
-    return truncateToWidth(line, width, "…");
+  /** Expanded transcript pane for the focused row — content height, capped at `maxRows`. */
+  #expandedPane(theme: Theme, width: number, maxRows: number): string[] {
+    if (maxRows <= 0 || !this.expandedId) return [];
+    const lines = this.interaction?.activity(this.expandedId, this.scroll) ?? [];
+    if (lines.length === 0) return [];
+    const body = lines.slice(0, maxRows).map((l) => fit(l, width));
+    const divider = theme.fg("border", `── ${theme.bold(this.expandedId ?? "")} ──`);
+    const bottom = theme.fg("border", "─".repeat(width));
+    return [divider, ...body, bottom];
   }
 
-  /** Subgoal rows for the active run — name + status glyph + completed/total. */
+  /** Subgoal tree for the active run — nested nodes with connectors + progress bars. */
   #subgoalRows(
     theme: Theme,
     snap: ForgerySnapshot,
     active: { subgoals: ForgerySubgoal[] },
     width: number,
     frame: number,
-  ): string[] {
-    const rows: string[] = [];
-    const subgoals = active.subgoals?.slice(0, 3) ?? [];
+    max: number,
+    selectedId?: string,
+  ): { rows: string[]; more: number } {
+    const subgoals = active.subgoals ?? [];
+    const byId = new Map(subgoals.map((s) => [s.id, s]));
+    const children = new Map<string, ForgerySubgoal[]>();
+    const roots: ForgerySubgoal[] = [];
     for (const s of subgoals) {
-      const glyph =
-        s.status === "running"
-          ? theme.fg("accent", animatedStatusGlyph("running", frame))
-          : s.status === "completed"
-            ? theme.fg("success", "✓")
-            : s.status === "failed"
-              ? theme.fg("error", "✗")
-              : s.status === "blocked"
-                ? theme.fg("warning", "◐")
-                : colorStatus(theme, s.status);
-      const progress =
-        s.total !== undefined && s.completed !== undefined
-          ? ` ${theme.fg("dim", `${s.completed}/${s.total}`)}`
-          : "";
-      const current = s.current ? ` ${theme.fg("dim", truncate(s.current, 32))}` : "";
-      const line = `  ${glyph} ${theme.fg("text", theme.bold(s.name))}${progress}${current}`;
-      rows.push(truncateToWidth(line, width, "…"));
+      if (s.parentSubgoalId && byId.has(s.parentSubgoalId)) {
+        const kids = children.get(s.parentSubgoalId) ?? [];
+        kids.push(s);
+        children.set(s.parentSubgoalId, kids);
+      } else {
+        roots.push(s);
+      }
     }
-    return rows;
+    const rows: string[] = [];
+    const visited = new Set<string>();
+    let shown = 0;
+    const visit = (node: ForgerySubgoal, prefix: string, isLast: boolean): void => {
+      if (shown >= max || visited.has(node.id)) return;
+      visited.add(node.id);
+      shown += 1;
+      const connector = isLast ? "└─ " : "├─ ";
+      const gutter = node.id === selectedId ? theme.fg("accent", "▌") : " ";
+      const glyph = renderStatus(theme, node.status, frame, this.#animations);
+      const bar = progressBar(node.completed, node.total, 5);
+      const progress =
+        node.total !== undefined && node.total > 0
+          ? ` ${theme.fg("dim", `${bar} ${node.completed ?? 0}/${node.total}`)}`
+          : "";
+      const current = node.current ? ` ${theme.fg("dim", truncate(node.current, 32))}` : "";
+      const line = `${prefix}${gutter} ${connector}${glyph} ${theme.fg("text", theme.bold(node.name))}${progress}${current}`;
+      rows.push(fit(line, width - 2));
+      const kids = children.get(node.id) ?? [];
+      const kidsPrefix = prefix + (isLast ? "   " : "│  ");
+      for (let i = 0; i < kids.length; i++) {
+        if (shown >= max) break;
+        visit(kids[i], kidsPrefix, i === kids.length - 1);
+      }
+    };
+    for (let i = 0; i < roots.length; i++) {
+      if (shown >= max) break;
+      visit(roots[i], "", i === roots.length - 1);
+    }
+    const more = Math.max(0, subgoals.length - shown);
+    return { rows, more };
   }
 }

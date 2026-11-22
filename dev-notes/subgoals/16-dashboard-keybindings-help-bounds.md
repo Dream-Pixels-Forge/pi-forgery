@@ -1,6 +1,6 @@
 # SG-16 — Dashboard: keybindings, help & index bounds
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0
 - **Area:** `src/ui/dashboard.ts`
 

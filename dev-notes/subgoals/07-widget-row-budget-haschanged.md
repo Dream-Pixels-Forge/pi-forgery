@@ -1,6 +1,6 @@
 # SG-07 — Widget row budget & change detection
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0
 - **Area:** `src/ui/widget.ts`
 

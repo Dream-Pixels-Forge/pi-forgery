@@ -1,6 +1,6 @@
 # SG-18 — Dashboard: correct agent durations & aligned table
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0
 - **Area:** `src/ui/dashboard.ts`
 

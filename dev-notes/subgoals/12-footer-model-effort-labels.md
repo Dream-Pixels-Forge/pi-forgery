@@ -1,6 +1,6 @@
 # SG-12 — Footer: model & effort labels
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P2
 - **Area:** `src/ui/footer.ts`
 

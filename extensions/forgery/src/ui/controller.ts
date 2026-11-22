@@ -22,11 +22,8 @@ import { ForgeryDashboard } from "./dashboard";
 import { ForgeryFooter, type ForgeryFooterContext } from "./footer";
 import { ForgeryWidget, type ForgeryWidgetInteraction } from "./widget";
 import {
-  animatedStatusGlyph,
-  formatCost,
-  formatDuration,
-  formatTokens,
-  statusGlyph,
+  formatStatusSummary,
+  summarizeStatus,
 } from "./format";
 import { GitBranchReader } from "../git";
 import { GitHubStatsReader } from "../git/githubStats";
@@ -50,6 +47,12 @@ export interface ForgeryUiOptions {
   widget?: boolean;
   /** Enable the custom footer. Defaults to true. */
   footer?: boolean;
+  /** Animate spinners and transitions. Defaults to true. */
+  animations?: boolean;
+  /** Footer layout: "auto" | 1 | 2. Defaults to "auto". */
+  lines?: "auto" | 1 | 2;
+  /** Maximum context compactions before a handoff alert (1..20). Defaults to 5. */
+  compactMax?: number;
 }
 
 export class ForgeryUiController {
@@ -60,6 +63,7 @@ export class ForgeryUiController {
   private ui?: ExtensionUIContext;
   /** The live extension context — read on demand, never captured by value. */
   private ctx?: ExtensionContext;
+  private hostCalls: string[];
   private footer?: ForgeryFooter;
   private widget?: ForgeryWidget;
   private refreshTimer?: NodeJS.Timeout;
@@ -67,9 +71,6 @@ export class ForgeryUiController {
   private unsubscribeStore?: () => void;
   private unsubscribeAgents?: () => void;
   private started = false;
-  /** Frame counter used to animate the "working" spinner in the status line. */
-  #frame = 0;
-  private hostCalls: string[];
   private gitBranchReader: GitBranchReader;
   private githubStats: GitHubStatsReader;
   private contextUsageReader: ContextUsageReader;
@@ -79,6 +80,8 @@ export class ForgeryUiController {
   };
   /** Timestamp of the last auto-compaction, to enforce the cooldown. */
   #lastCompactAt = 0;
+  /** Wall-clock source for deterministic status rendering (SG-14/SG-20). */
+  #clock = Date.now;
 
   constructor(
     store: ForgeryActivityStore,
@@ -97,6 +100,9 @@ export class ForgeryUiController {
       retainMs: options.retainMs ?? 30_000,
       widget: options.widget ?? true,
       footer: options.footer ?? true,
+      animations: options.animations ?? true,
+      lines: options.lines ?? "auto",
+      compactMax: options.compactMax ?? 5,
     };
   }
 
@@ -307,9 +313,11 @@ export class ForgeryUiController {
         return lines;
       },
       release: () => {
+        // Hand focus back to the editor (clear widget focus) instead of
+        // re-focusing the widget, which previously left the user stuck.
+        if (this.widget) this.widget.focused = false;
         const tui = this.#tui();
         tui?.requestRender();
-        void this.focusWidget(ctx);
       },
       requestRender: () => {
         this.#tui()?.requestRender();
@@ -321,6 +329,7 @@ export class ForgeryUiController {
       this.options.maxRows,
       { retainMs: this.options.retainMs },
       interaction,
+      this.options.animations,
     );
     // Mount: setWidget takes a factory `(tui, theme) => Component & {dispose?}`.
     // Our widget is already constructed; wrap it in a stable factory so the
@@ -346,7 +355,15 @@ export class ForgeryUiController {
       effort: () => this.#read((c) => c.thinkingLevel) ?? null,
       ciStatus: () => this.githubStats.ciStatus(),
     };
-    this.footer = new ForgeryFooter(() => this.ui!.theme, () => this.store.snapshot(), footerCtx);
+    this.footer = new ForgeryFooter(
+      () => this.ui!.theme,
+      () => this.store.snapshot(),
+      footerCtx,
+      this.options.animations,
+      Date.now,
+      this.options.lines,
+      this.options.compactMax,
+    );
     // Mount: setFooter takes a factory `(tui, theme, footerData) => Component`.
     const footerRef = this.footer;
     this.ui.setFooter(
@@ -356,41 +373,17 @@ export class ForgeryUiController {
   }
 
   #syncWidget(snap: ForgerySnapshot): void {
-    if (!this.ui) return;
-    const shouldShow = this.widget?.shouldShow(snap, this.options.retainMs);
-    if (shouldShow && this.widget) {
-      const widgetRef = this.widget;
-      this.ui.setWidget(
-        "forgery",
-        (_tui: TUI, _theme: Theme): Component & { dispose?(): void } =>
-          widgetRef as unknown as Component & { dispose?(): void },
-        { placement: "aboveEditor" },
-      );
-    } else {
-      this.ui.setWidget("forgery", undefined, { placement: "aboveEditor" });
-    }
+    if (!this.ui || !this.widget) return;
+    // Mount once (SG-21): visibility is internal, we never call setWidget
+    // again after the initial mount — toggling it caused flicker and lost
+    // focus/selection state.
+    const shouldShow = this.widget.shouldShow(snap, this.options.retainMs);
+    this.widget.setVisible(shouldShow);
+    this.widget.update(snap);
+    if (this.widget.dirty) this.#tui()?.requestRender();
   }
 
   #statusString(snap: ForgerySnapshot): string {
-    this.#frame += 1;
-    const active = snap.runs.find((r) => r.status === "running");
-    if (!active) {
-      const recent = snap.runs[0];
-      if (recent) return `${statusGlyph(recent.status)} ${recent.name} ${recent.status}`;
-      return "";
-    }
-    const totals = snap.activeTotals;
-    const parts = [
-      `${animatedStatusGlyph("running", this.#frame)} ${active.name}`,
-      totals ? `${totals.calls} calls` : undefined,
-      totals?.tokens ? formatTokens(totals.tokens) : undefined,
-      totals?.cost ? formatCost(totals.cost) : undefined,
-      formatDuration(snap.now - active.startedAt),
-    ];
-    const st = snap.subgoalTotals;
-    if (st && st.total > 0) {
-      parts.push(`subgoals ${st.completed}/${st.total}`);
-    }
-    return parts.filter(Boolean).join(" · ");
+    return formatStatusSummary(summarizeStatus(snap, this.#clock));
   }
 }

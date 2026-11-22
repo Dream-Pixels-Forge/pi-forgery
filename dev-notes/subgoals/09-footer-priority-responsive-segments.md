@@ -1,6 +1,6 @@
 # SG-09 — Footer: priority-based responsive segments
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/footer.ts`
 

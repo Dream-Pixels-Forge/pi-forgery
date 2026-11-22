@@ -1,6 +1,6 @@
 # SG-20 — Single source for the status string
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/controller.ts`, `src/ui/footer.ts`, `src/ui/format.ts`
 

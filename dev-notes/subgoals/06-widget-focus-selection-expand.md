@@ -1,6 +1,6 @@
 # SG-06 — Widget focus, row selection & expand
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/widget.ts`, `src/ui/controller.ts`
 

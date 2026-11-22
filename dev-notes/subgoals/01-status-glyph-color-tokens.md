@@ -1,6 +1,6 @@
 # SG-01 — Unified status glyph & color tokens
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0 (foundation for every other UI subgoal)
 - **Area:** `src/ui/format.ts`
 

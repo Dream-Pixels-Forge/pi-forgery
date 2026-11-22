@@ -1,13 +1,13 @@
 /**
  * pi-forgery — status-line footer (Claude Code style).
  *
- * A single compact line — never two — with just the essentials:
+ * A compact status line with priority-based responsive segments. Segments are
+ * laid out left group (session: model, branch) / right group (activity:
+ * context gauge, CI, run). On narrow terminals whole segments are dropped
+ * (never mid-text), and alerts (CI failing, handoff) survive at any width.
  *
- *   model · branch · ctx [███░░░] N% · [agent ◐]
- *
- * The context bar colorizes at 50% (warning) and 85% (error). While a CI
- * check is pending the model name is hidden to make room for CI status,
- * then restores with a character-by-character reveal animation.
+ * When `footer.lines` is `"auto"` and the segments overflow one line, the
+ * footer switches to two lines: line 1 = session, line 2 = activity.
  *
  * Every value comes from the activity store or the live host context — no
  * fabricated telemetry. The controller also mirrors a compact status string
@@ -15,20 +15,23 @@
  * live run when another extension reclaims the custom footer slot.
  */
 
-import type { ContextUsage, Theme } from "@earendil-works/pi-coding-agent";
+import type { ContextUsage, Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ForgerySnapshot } from "../activity/types";
+import type { UiStatus } from "./format";
 import {
-  animatedStatusGlyph,
-  colorStatus,
-  formatCost,
+  effortMeter,
+  fit,
+  formatDuration,
   formatPercent,
   formatTokens,
-  safeText,
+  formatStatusSummary,
+  progressBar,
+  renderStatus,
+  shortModel,
   statusGlyph,
-  statusLine,
-  truncate,
+  summarizeStatus,
+  vw,
 } from "./format";
 
 export interface ForgeryFooterContext {
@@ -43,198 +46,280 @@ export interface ForgeryFooterContext {
   modelId: () => string | undefined;
   /** Thinking/effort level (Pi's ThinkingLevel), or null. */
   effort: () => string | null;
-  /** CI status: "pending" | "failed" | "green", or null. */
+  /** CI status: "passing" | "failing" | "running" | "none", or null. */
   ciStatus: () => string | null;
 }
 
+/** A footer segment: a piece of the status line with a priority and min width. */
+interface FooterSegment {
+  id: string;
+  /** Lower number = kept longer when shrinking. 0 = alert, always kept. */
+  priority: number;
+  align: "left" | "right";
+  /** Minimum visible width this segment needs to be shown at all. */
+  minWidth: number;
+  /** Render the segment; undefined means hide it. */
+  render: () => string | undefined;
+}
+
+/** Context-percent colour thresholds. */
+const CTX_WARN_PCT = 50;
+const CTX_ERROR_PCT = 85;
+
 /**
- * Claude Code–inspired status line: one compact line, essentials only.
- *
- * Segments: model · branch · ctx [bar] N% · [active agent with spinner].
+ * Claude Code–inspired status line with priority-based responsive segments.
  */
 export class ForgeryFooter implements Component {
   private theme: () => Theme;
   private snapshot: () => ForgerySnapshot;
   private footerCtx: ForgeryFooterContext;
-  /** Frame counter used to animate the "working" spinner while a run is active. */
-  #frame = 0;
+  /** Whether spinners and transitions are animated. */
+  #animations: boolean;
+  private clock: () => number;
+  /** Footer layout: "auto" | 1 | 2. */
+  #lines: "auto" | 1 | 2;
+  /** Maximum context compactions before a handoff alert (1..20). */
+  #compactMax: number;
   /** Timestamp when CI entered "pending" (check in progress), null when not pending. */
   #ciPendingSince: number | null = null;
-  /** Frame when CI restore animation started, null when not restoring. */
-  #ciRestoreFrame: number | null = null;
+  /** Timestamp when CI left "pending" (restore animation started), null when not restoring. */
+  #ciRestoreStartMs: number | null = null;
 
-  constructor(theme: () => Theme, snapshot: () => ForgerySnapshot, footerCtx: ForgeryFooterContext) {
+  constructor(
+    theme: () => Theme,
+    snapshot: () => ForgerySnapshot,
+    footerCtx: ForgeryFooterContext,
+    animations = true,
+    clock = Date.now,
+    lines: "auto" | 1 | 2 = "auto",
+    compactMax = 5,
+  ) {
     this.theme = theme;
     this.snapshot = snapshot;
     this.footerCtx = footerCtx;
+    this.#animations = animations;
+    this.clock = clock;
+    this.#lines = lines;
+    this.#compactMax = compactMax;
   }
 
   invalidate(): void {}
 
   /**
    * Compact status string mirrored into `setStatus("forgery", …)`.
+   * Single source of truth (SG-20): built from `summarizeStatus` so the
+   * status bar, footer run segment, and widget title always agree.
    */
   statusString(): string {
-    this.#frame += 1;
     const snap = this.snapshot();
-    const active = snap.runs.find((r) => r.status === "running");
-    if (!active) {
-      const recent = snap.runs[0];
-      if (recent) {
-        return statusLine([
-          `${statusGlyph(recent.status)} ${recent.name} ${recent.status}`,
-          recent.error ? truncate(recent.error, 32) : undefined,
-        ]);
-      }
-      return "forgery · idle";
-    }
-    const totals = snap.activeTotals;
-    return statusLine([
-      `${animatedStatusGlyph("running", this.#frame)} ${active.name}`,
-      totals ? `${totals.calls} calls` : undefined,
-      totals?.tokens ? `${formatTokens(totals.tokens)} tok` : undefined,
-      totals?.cost ? formatCost(totals.cost) : undefined,
-      formatDuration(snap.now - active.startedAt),
-    ]);
+    return formatStatusSummary(summarizeStatus(snap, this.clock));
   }
 
-  /** Render a compact progress bar: "[████░░░░] 45%". Colorizes at 50% (warning) and 85% (error). */
-  #progressBar(pct: number, theme: Theme, width = 8): string {
-    // Pi does not clamp `percent`, so an over-full context would otherwise
-    // produce a negative repeat count.
-    const clamped = Math.max(0, Math.min(100, pct));
-    const filled = Math.round((clamped / 100) * width);
-    const empty = width - filled;
-    const color = clamped >= 85 ? "error" : clamped >= 50 ? "warning" : "muted";
-    return theme.fg(color, `[${"█".repeat(filled)}${"░".repeat(empty)}] ${formatPercent(clamped)}`);
-  }
-
-  render(width: number): string[] {
-    const snap = this.snapshot();
-    const theme = this.theme();
-    // Advance the spinner frame on every render while a run is active.
-    this.#frame += 1;
-
-    const model = this.#readModel();
-    const branch = (() => {
-      try {
-        return this.footerCtx.gitBranch();
-      } catch {
-        return null;
-      }
-    })();
-    const usage = (() => {
-      try {
-        return this.footerCtx.contextUsage();
-      } catch {
-        return null;
-      }
-    })();
+  /** Build the segment list for the current snapshot. */
+  #segments(snap: ForgerySnapshot, theme: Theme): FooterSegment[] {
+    const usage = this.#readCtxUsage();
     const pct = usage?.percent ?? null;
     const tokens = usage?.tokens ?? null;
     const tokensMax = usage?.contextWindow ?? null;
-    const effort = (() => {
-      try {
-        return this.footerCtx.effort();
-      } catch {
-        return null;
-      }
-    })();
-
-    // Track CI check state so the model name can be hidden while a check runs,
-    // then restored with an animation once CI settles.
-    const ciStatus = (() => {
-      try {
-        return this.footerCtx.ciStatus();
-      } catch {
-        return null;
-      }
-    })();
-    if (ciStatus === "pending") {
-      if (this.#ciPendingSince === null) this.#ciPendingSince = Date.now();
-      this.#ciRestoreFrame = null;
-    } else if (this.#ciPendingSince !== null) {
-      // CI just left "pending" — start the restore animation.
-      if (this.#ciRestoreFrame === null) this.#ciRestoreFrame = this.#frame;
-      this.#ciPendingSince = null;
-    }
-    const ciChecking = this.#ciPendingSince !== null;
-    const restoreFrame = this.#ciRestoreFrame;
-    const restoring = restoreFrame !== null;
-    if (restoring && this.#frame - restoreFrame >= 30) {
-      // ~30 frames (~3 s at 10 fps) to fully restore the model name.
-      this.#ciRestoreFrame = null;
-    }
-    const showModel = !ciChecking;
-
     const active = snap.runs.find((r) => r.status === "running");
+    const recent = snap.runs[0];
+    const ciStatus = this.#readCiStatus();
+    const model = this.#readModel();
+    const effort = this.#readEffort();
+    const branch = this.#readBranch();
 
-    // ── Segment 1: model (short name) ─────────────────────────────────
-    let modelSeg: string | undefined;
-    if (showModel && model) {
-      let modelPart = shortModel(model, effort);
-      if (restoring) {
-        // Character-by-character reveal animation while CI settles.
-        const progress = Math.min(1, (this.#frame - (this.#ciRestoreFrame ?? 0)) / 30);
-        modelPart = modelPart.slice(0, Math.max(0, Math.floor(modelPart.length * progress)));
-      }
-      modelSeg = theme.fg("accent", modelPart);
-    } else if (!model) {
-      modelSeg = theme.fg("dim", "no-model");
-    }
+    const segs: FooterSegment[] = [];
 
-    // ── Segment 2: git branch ─────────────────────────────────────────
-    const branchSeg = branch
-      ? theme.fg("muted", `⎇ ${safeText(branch)}`)
-      : theme.fg("dim", "no-repo");
+    // ── Left group: session ──────────────────────────────────────────
 
-    // ── Segment 3: context usage (colorized bar) ──────────────────────
-    const ctxSeg =
-      pct !== null
-        ? theme.fg("muted", "ctx ") +
-          this.#progressBar(pct, theme, 6) +
-          (tokens !== null ? ` · ${formatTokens(tokens)}/${formatTokens(tokensMax)}` : "")
-        : theme.fg("dim", "ctx —");
+    segs.push({
+      id: "model",
+      priority: 3,
+      align: "left",
+      minWidth: 6,
+      render: () => {
+        if (!model) return theme.fg("dim", "no-model");
+        const meter = effortMeter(effort);
+        const text = meter ? `${shortModel(model)} ${meter}` : shortModel(model);
+        return theme.fg("accent", text);
+      },
+    });
 
-    // ── Segment 4: CI status (shown only while a check runs) ─────────
-    const ciSeg =
-      ciStatus === "pending"
-        ? theme.fg("warning", "CI ◐")
-        : ciStatus === "failed" || ciStatus === "blocker"
-          ? theme.fg("error", "CI ✗")
-          : ciStatus === "green" || ciStatus === "major"
-            ? theme.fg("success", "CI ✓")
-            : ciStatus
-              ? theme.fg("muted", `CI ${ciStatus}`)
-              : undefined;
+    segs.push({
+      id: "branch",
+      priority: 2,
+      align: "left",
+      minWidth: 6,
+      render: () => {
+        if (!branch) return theme.fg("dim", "no-repo");
+        return theme.fg("muted", `⎇ ${branch.replace(/[^\x20-\x7E]/g, "")}`);
+      },
+    });
 
-    // ── Segment 5: active run / agent with spinner ────────────────────
-    let runSeg: string | undefined;
-    if (active) {
-      const totals = snap.activeTotals;
-      const calls = totals ? ` · ${totals.calls} calls` : "";
-      const dur = active.startedAt ? ` · ${formatDuration(snap.now - active.startedAt)}` : "";
-      runSeg = `${theme.fg(
-        "accent",
-        animatedStatusGlyph("running", this.#frame),
-      )} ${theme.fg("text", theme.bold(active.name))}${calls}${dur}`;
-    } else {
-      const recent = snap.runs[0];
-      if (recent) {
-        runSeg = `${colorStatus(theme, recent.status)} ${recent.name} ${recent.status}`;
-      } else {
-        runSeg = theme.fg("dim", "idle");
-      }
-    }
+    // ── Right group: activity ────────────────────────────────────────
 
-    // ── Assemble (always one line) ────────────────────────────────────
-    const parts = [modelSeg, branchSeg, ctxSeg, ciSeg, runSeg].filter(Boolean);
-    const single = parts.join("  ·  ");
-    const fitted = truncateToWidth(single, width, "…");
-    return [fitted];
+    segs.push({
+      id: "ctx",
+      priority: 2,
+      align: "right",
+      minWidth: 8,
+      render: () => {
+        if (pct === null) return theme.fg("dim", "ctx —");
+        const clamped = Math.max(0, Math.min(100, pct));
+        const color =
+          clamped >= CTX_ERROR_PCT ? "error" : clamped >= CTX_WARN_PCT ? "warning" : "muted";
+        const bar = this.#gauge(clamped, theme, 6);
+        let extra = `ctx ${bar}`;
+        if (tokens !== null && tokensMax !== null) {
+          extra += ` ${formatTokens(tokens)}/${formatTokens(tokensMax)}`;
+        }
+        const compacts = (active?.compacts ?? recent?.compacts ?? 0);
+        if (compacts > 0) {
+          extra += ` ↻${compacts}/${this.#compactMax}`;
+        }
+        return theme.fg(color, extra);
+      },
+    });
+
+    // Handoff alert (priority 0 — survives at any width).
+    segs.push({
+      id: "handoff",
+      priority: 0,
+      align: "right",
+      minWidth: 10,
+      render: () => {
+        const compacts = active?.compacts ?? recent?.compacts ?? 0;
+        if (compacts >= this.#compactMax) {
+          return theme.fg("error", "⚠ handoff");
+        }
+        return undefined;
+      },
+    });
+
+    // CI status.
+    segs.push({
+      id: "ci",
+      priority: ciStatus === "failing" ? 0 : ciStatus === "running" || ciStatus === "pending" ? 1 : 3,
+      align: "right",
+      minWidth: 6,
+      render: () => {
+        let status = ciStatus;
+        if (status === "pending") status = "running";
+        if (status === "passing") return theme.fg("success", "✓ CI");
+        if (status === "failing") return theme.fg("error", "✗ CI");
+        if (status === "running") {
+          const frame = Math.floor(this.clock() / 80) % 10;
+          const glyph = renderStatus(theme, "running", frame, this.#animations);
+          return theme.fg("warning", `${glyph} CI`);
+        }
+        return undefined;
+      },
+    });
+
+    // Active run / recent run segment.
+    segs.push({
+      id: "run",
+      priority: active ? 1 : recent ? 2 : 4,
+      align: "right",
+      minWidth: 8,
+      render: () => {
+        const target = active ?? recent;
+        if (!target) return undefined;
+        const glyph = active
+          ? renderStatus(theme, "running", Math.floor(this.clock() / 80) % 10, this.#animations)
+          : colorStatusForSnapshot(target.status, theme);
+        const calls = target.metrics?.toolCalls !== undefined ? ` ${target.metrics.toolCalls} calls` : "";
+        const dur = active ? ` · ${formatDuration(snap.now - target.startedAt)}` : "";
+        const statusText = active ? "" : ` ${target.status}`;
+        return theme.fg("text", `${glyph} ${theme.bold(target.name)}${calls}${dur}${statusText}`);
+      },
+    });
+
+    return segs;
   }
 
-  /** Shorten a model id for display: "provider/model" → "model", drop effort tag. */
+  /** Render at `width` columns, possibly splitting into two lines. */
+  render(width: number): string[] {
+    const snap = this.snapshot();
+    const theme = this.theme();
+    const segs = this.#segments(snap, theme);
+
+    const measured = segs.map((s) => {
+      const rendered = s.render() ?? "";
+      return { ...s, rendered, width: vw(rendered) };
+    });
+
+    const left = measured.filter((s) => s.align === "left");
+    const right = measured.filter((s) => s.align === "right");
+
+    const joinWithGap = (parts: string[]): string => parts.filter(Boolean).join("  ·  ");
+
+    const all = joinWithGap([...left.map((s) => s.rendered), ...right.map((s) => s.rendered)].filter(Boolean));
+    if (vw(all) <= width || this.#lines === 1) {
+      return [fit(all, width)];
+    }
+
+    // Two-line mode: line 1 = session (left group), line 2 = activity (right group).
+    if (this.#lines === "auto" || this.#lines === 2) {
+      const line1 = joinWithGap(left.map((s) => s.rendered));
+      const line2 = joinWithGap(right.map((s) => s.rendered));
+      if (vw(line1) <= width && vw(line2) <= width) {
+        return [fit(line1, width), fit(line2, width)];
+      }
+    }
+
+    // Still overflowing: drop segments by priority (right group first,
+    // lowest priority = highest number dropped first), keeping alerts.
+    const droppable = [...measured].filter((s) => s.priority > 0);
+    droppable.sort((a, b) => b.priority - a.priority);
+    let kept = measured.filter((s) => s.priority === 0);
+    for (const seg of droppable) {
+      const trial = [...kept, seg];
+      const l = joinWithGap(trial.filter((s) => s.align === "left" && s.rendered).map((s) => s.rendered));
+      const r = joinWithGap(trial.filter((s) => s.align === "right" && s.rendered).map((s) => s.rendered));
+      const trialLine = joinWithGap([l, r].filter(Boolean));
+      if (vw(trialLine) <= width) {
+        kept = trial;
+        break;
+      }
+      kept = trial;
+    }
+
+    const finalLeft = kept.filter((s) => s.align === "left" && s.rendered).map((s) => s.rendered);
+    const finalRight = kept.filter((s) => s.align === "right" && s.rendered).map((s) => s.rendered);
+    const finalLine = joinWithGap([...finalLeft, ...finalRight]);
+    return [fit(finalLine, width)];
+  }
+
+  /** Compact progress bar with thresholds: `ctx ▰▰▰▱ 72%`. */
+  #gauge(pct: number, theme: Theme, cells = 6): string {
+    const clamped = Math.max(0, Math.min(100, pct));
+    const filled = Math.round((clamped / 100) * cells);
+    const empty = cells - filled;
+    const color =
+      clamped >= CTX_ERROR_PCT ? "error" : clamped >= CTX_WARN_PCT ? "warning" : "muted";
+    return theme.fg(color, `[${"█".repeat(filled)}${"░".repeat(empty)}] ${formatPercent(clamped)}`);
+  }
+
+  /** Read live context usage, degrading on invalid context. */
+  #readCtxUsage(): ContextUsage | null {
+    try {
+      return this.footerCtx.contextUsage();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read live CI status, degrading on invalid context. */
+  #readCiStatus(): string | null {
+    try {
+      return this.footerCtx.ciStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read live model id, degrading on invalid context. */
   #readModel(): string | undefined {
     try {
       return this.footerCtx.modelId();
@@ -242,32 +327,40 @@ export class ForgeryFooter implements Component {
       return undefined;
     }
   }
+
+  /** Read live effort, degrading on invalid context. */
+  #readEffort(): string | null {
+    try {
+      return this.footerCtx.effort();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read live branch, degrading on invalid context. */
+  #readBranch(): string | null {
+    try {
+      return this.footerCtx.gitBranch();
+    } catch {
+      return null;
+    }
+  }
 }
 
-/** Milliseconds → "3m12s", "45s", "1h20m", "—" when undefined. */
-export function formatDuration(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || ms < 0) return "—";
-  if (ms < 1000) return "<1s";
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return s % 60 > 0 ? `${m}m${s % 60}s` : `${m}m`;
-  const h = Math.floor(m / 60);
-  return m % 60 > 0 ? `${h}h${m % 60}m` : `${h}h`;
-}
-
-/** "provider/model-name" → "model-name", with optional effort tag (lw/med/hgh). */
-function shortModel(modelId: string, effort: string | null | undefined): string {
-  const name = modelId.includes("/") ? modelId.split("/").pop() ?? modelId : modelId;
-  const effortTag =
-    effort === "low"
-      ? " (lw)"
-      : effort === "medium"
-        ? " (med)"
-        : effort === "high"
-          ? " (hgh)"
-          : "";
-  return `${name}${effortTag}`;
+/** Colour for a static (non-running) status glyph. */
+function colorStatusForSnapshot(status: string, theme: Theme): string {
+  const map: Record<string, string> = {
+    completed: "success",
+    failed: "error",
+    cancelled: "muted",
+    stopped: "muted",
+    queued: "dim",
+    pending: "muted",
+    blocked: "warning",
+    timed_out: "error",
+    unavailable: "warning",
+  };
+  return theme.fg((map[status] ?? "dim") as ThemeColor, statusGlyph(status as UiStatus));
 }
 
 /**

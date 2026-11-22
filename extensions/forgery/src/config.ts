@@ -48,6 +48,12 @@ export interface UiConfig {
   maxRows: number;
   /** Widget retention after the last run finishes, in ms. */
   retainMs: number;
+  /** Animate spinners and transitions (set false to freeze motion). */
+  animations: boolean;
+  /** Footer layout: "auto" switches to two lines when segments overflow, or force 1/2 lines. */
+  lines: "auto" | 1 | 2;
+  /** Maximum context compactions before a handoff alert (1..20). */
+  compactMax: number;
 }
 
 export interface ForgeryConfig {
@@ -72,6 +78,9 @@ export const DEFAULT_CONFIG: ForgeryConfig = {
     footer: true,
     maxRows: 8,
     retainMs: 30_000,
+    animations: true,
+    lines: "auto",
+    compactMax: 5,
   },
 };
 
@@ -94,6 +103,9 @@ export interface ParsableUiConfig {
   footer?: boolean;
   maxRows?: number;
   retainMs?: number;
+  animations?: boolean;
+  lines?: "auto" | 1 | 2;
+  compactMax?: number;
 }
 
 export interface ParsableForgeryConfig {
@@ -241,6 +253,28 @@ export function parseConfig(raw: unknown): ParsableForgeryConfig {
       }
       // else: leave as default
     }
+    // animations
+    if ('animations' in uiInput) {
+      if (typeof uiInput.animations === "boolean") {
+        result.ui.animations = uiInput.animations;
+      }
+      // else: leave as default
+    }
+    // lines
+    if ('lines' in uiInput) {
+      if (uiInput.lines === "auto" || uiInput.lines === 1 || uiInput.lines === 2) {
+        result.ui.lines = uiInput.lines;
+      }
+      // else: leave as default
+    }
+    // compactMax
+    if ('compactMax' in uiInput) {
+      if (typeof uiInput.compactMax === "number" && Number.isFinite(uiInput.compactMax)) {
+        const val = Math.round(uiInput.compactMax);
+        result.ui.compactMax = val < 1 ? 1 : val > 20 ? 20 : val;
+      }
+      // else: leave as default
+    }
   }
 
   return result;
@@ -302,6 +336,18 @@ export function mergeConfig(base: ForgeryConfig, override: ParsableForgeryConfig
     }
     if (override.ui.retainMs !== undefined && override.ui.retainMs !== DEFAULT_CONFIG.ui.retainMs) {
       uiBase.retainMs = override.ui.retainMs;
+    }
+    if (override.ui.animations !== undefined && override.ui.animations !== DEFAULT_CONFIG.ui.animations) {
+      uiBase.animations = override.ui.animations;
+    }
+    if (override.ui.lines !== undefined && override.ui.lines !== DEFAULT_CONFIG.ui.lines) {
+      uiBase.lines = override.ui.lines;
+    }
+    if (
+      override.ui.compactMax !== undefined &&
+      override.ui.compactMax !== DEFAULT_CONFIG.ui.compactMax
+    ) {
+      uiBase.compactMax = override.ui.compactMax;
     }
     out.ui = uiBase;
   }

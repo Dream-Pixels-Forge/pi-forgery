@@ -77,8 +77,8 @@ test("ForgeryUiController: footer reads host state live, not frozen at mount", a
   // Context usage reader primes asynchronously, so first render shows "ctx —".
   const atMount = footer.render(200)[0];
   assert.match(atMount, /ctx —/);
-  assert.match(atMount, /model-x/);
-  assert.match(atMount, /lw/);
+  assert.match(atMount, /model x/);
+  assert.match(atMount, /●○○/);
 
   // Host state changes afterwards — the footer must pick them up.
   percent = 55;
@@ -87,8 +87,8 @@ test("ForgeryUiController: footer reads host state live, not frozen at mount", a
 
   const after = footer.render(200)[0];
   assert.match(after, /55%/);
-  assert.match(after, /model-y/);
-  assert.match(after, /hgh/);
+  assert.match(after, /model y/);
+  assert.match(after, /●●●/);
 
   controller.stop();
 });

@@ -1,6 +1,6 @@
 # SG-02 — Width-safe text primitives (ANSI + wide chars)
 
-- **Status:** todo
+- **Status:** done
 - **Priority:** P0
 - **Area:** `src/ui/format.ts` (+ call sites in widget/dashboard/footer)
 
