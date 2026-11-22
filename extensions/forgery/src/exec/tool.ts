@@ -49,6 +49,8 @@ import {
   AgentsRunEnhanced,
   AgentsRunEnhancedResult,
   AgentsStop,
+  AgentsRouteSchema,
+  AgentsRouteResultSchema,
   CostBudgetSchema,
   CostEstimateSchema,
   CostOptimizationSchema,
@@ -83,6 +85,7 @@ import {
   type DevLoopConfig,
 } from "../agents/dev-loop";
 import { CostManager, createCostManager, type CostBudget } from "../agents/cost-manager";
+import { ModelRouter } from "../agents/router";
 import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
 import { createResolver } from "../workflow/resolver";
@@ -831,6 +834,10 @@ export function makeRegistry(
 // Create a cost manager for this execution context
 const costManager = createCostManager(activity);
 
+// Model routing intelligence — recommends cheapest model with
+// sufficient historical pass rate for a given task class.
+const modelRouter = new ModelRouter(activity, costManager);
+
 // Estimate cost before running
 registry.register({
   ref: "cost.estimate",
@@ -925,6 +932,26 @@ registry.register({
   execute: async () => {
     const totals = costManager.getTotalCosts();
     return { value: totals, preview: `global: $${totals.totalCost.toFixed(4)} | ${totals.runCount} runs | ${totals.agentCount} agents` };
+  },
+});
+
+// ── Agent model routing ───────────────────────────────────────────────
+
+registry.register({
+  ref: "agents.route",
+  schema: AgentsRouteSchema,
+  kind: "tool",
+  execute: async (args) => {
+    const task = String(args.task ?? "");
+    if (!task) return { error: "agents.route: task is required" };
+    const candidates = Array.isArray(args.candidates) ? (args.candidates as string[]) : undefined;
+    const minPassRate = args.minPassRate !== undefined ? Number(args.minPassRate) : 0.6;
+
+    const result = modelRouter.route(task, candidates, minPassRate);
+    return {
+      value: result,
+      preview: `route ${result.model} · ${(result.historicalPassRate * 100).toFixed(0)}% pass · $${result.expectedCost.toFixed(4)}`,
+    };
   },
 });
 

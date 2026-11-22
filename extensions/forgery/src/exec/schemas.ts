@@ -157,6 +157,25 @@ export const AgentsStop = Type.Object({
   id: Type.String({ description: "Agent id returned by agents.run." }),
 });
 
+// ── Agent model routing ─────────────────────────────────────────────────
+
+export const AgentsRouteSchema = Type.Object({
+  task: Type.String({ description: "The natural-language task to route to a model." }),
+  candidates: Type.Optional(
+    Type.Array(Type.String(), { description: "Model ids to choose from. Defaults to the router's default model." })
+  ),
+  minPassRate: Type.Optional(
+    Type.Number({ description: "Minimum historical pass rate 0-1 (default 0.6).", minimum: 0, maximum: 1 })
+  ),
+});
+
+export const AgentsRouteResultSchema = Type.Object({
+  model: Type.String(),
+  reason: Type.String(),
+  expectedCost: Type.Number(),
+  historicalPassRate: Type.Number(),
+});
+
 export const AgentsRunEnhancedResult = Type.Object({
   id: Type.String(),
   status: Type.String({ enum: ["completed", "failed", "stopped", "timed_out", "unavailable"] }),

@@ -486,6 +486,43 @@ export class ForgeryActivityStore {
     this.#notify();
   }
 
+  // ── agent outcomes (for model routing) ─────────────────────────────
+
+  #outcomes: Map<string, { completed: number; failed: number; totalCost: number }> = new Map();
+
+  /** Record an agent run outcome for model+taskClass routing. */
+  recordOutcome(model: string, taskClass: string, status: "completed" | "failed", cost: number): void {
+    const key = `${model}\0${taskClass}`;
+    let entry = this.#outcomes.get(key);
+    if (!entry) {
+      entry = { completed: 0, failed: 0, totalCost: 0 };
+      this.#outcomes.set(key, entry);
+    }
+    if (status === "completed") entry.completed += 1;
+    else entry.failed += 1;
+    entry.totalCost += cost;
+    this.#notify();
+  }
+
+  /** Read aggregated outcome stats for a model+taskClass. */
+  agentOutcomeFor(model: string, taskClass: string): {
+    completed: number;
+    failed: number;
+    totalRuns: number;
+    avgCostPerRun: number;
+  } {
+    const key = `${model}\0${taskClass}`;
+    const entry = this.#outcomes.get(key);
+    if (!entry) return { completed: 0, failed: 0, totalRuns: 0, avgCostPerRun: 0 };
+    const totalRuns = entry.completed + entry.failed;
+    return {
+      completed: entry.completed,
+      failed: entry.failed,
+      totalRuns,
+      avgCostPerRun: totalRuns > 0 ? entry.totalCost / totalRuns : 0,
+    };
+  }
+
   // ── agents (one-shot, observed from the runner) ────────────────────────
 
   addAgent(agent: ForgeryAgentRecord): void {

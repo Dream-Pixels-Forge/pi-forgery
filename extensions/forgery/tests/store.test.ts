@@ -308,3 +308,53 @@ test("store: subgoal revision bumps on mutation", () => {
   store.updateSubgoal(sgId, { status: "running" });
   assert.ok(store.revision() > before + 1);
 });
+
+// ── agent outcomes (model routing) ───────────────────────────────────
+
+test("store: recordOutcome + agentOutcomeFor", () => {
+  const store = new ForgeryActivityStore();
+
+  // Cold start: no history
+  const empty = store.agentOutcomeFor("claude-haiku", "code-gen");
+  assert.equal(empty.completed, 0);
+  assert.equal(empty.failed, 0);
+  assert.equal(empty.totalRuns, 0);
+  assert.equal(empty.avgCostPerRun, 0);
+
+  // Record completed + failed runs
+  store.recordOutcome("claude-haiku", "code-gen", "completed", 0.05);
+  store.recordOutcome("claude-haiku", "code-gen", "completed", 0.03);
+  store.recordOutcome("claude-haiku", "code-gen", "failed", 0.02);
+
+  const stats = store.agentOutcomeFor("claude-haiku", "code-gen");
+  assert.equal(stats.completed, 2);
+  assert.equal(stats.failed, 1);
+  assert.equal(stats.totalRuns, 3);
+  assert.equal(stats.avgCostPerRun, (0.05 + 0.03 + 0.02) / 3);
+});
+
+test("store: recordOutcome is isolated per model+taskClass", () => {
+  const store = new ForgeryActivityStore();
+
+  store.recordOutcome("opus", "planning", "completed", 0.50);
+  store.recordOutcome("haiku", "planning", "failed", 0.01);
+
+  const opusStats = store.agentOutcomeFor("opus", "planning");
+  assert.equal(opusStats.completed, 1);
+  assert.equal(opusStats.failed, 0);
+
+  const haikuStats = store.agentOutcomeFor("haiku", "planning");
+  assert.equal(haikuStats.completed, 0);
+  assert.equal(haikuStats.failed, 1);
+
+  // Different task class is isolated
+  const opusCodeGen = store.agentOutcomeFor("opus", "code-gen");
+  assert.equal(opusCodeGen.totalRuns, 0);
+});
+
+test("store: recordOutcome bumps revision", () => {
+  const store = new ForgeryActivityStore();
+  const before = store.revision();
+  store.recordOutcome("haiku", "general", "completed", 0.01);
+  assert.ok(store.revision() > before);
+});

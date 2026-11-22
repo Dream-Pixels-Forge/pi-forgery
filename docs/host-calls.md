@@ -39,6 +39,18 @@ You can also change it at runtime from inside Pi:
 /forgery image-protocol auto   # reset to auto-detect
 ```
 
+## Agent model routing
+
+| Call | Effect |
+|------|--------|
+| `agents.route({ task, candidates?, minPassRate? })` | Recommends the cheapest model that historically completes this kind of task, based on per-model outcome history in the activity store. Advisory only — the caller still passes `model` to `agents.run`. Returns `{ model, reason, expectedCost, historicalPassRate }`. |
+
+- **`task`** — Natural-language task description. Used to classify the task (planning, code-gen, review, summarization, research, debug, general).
+- **`candidates?`** — Model ids to choose from. Defaults to the router's default model (`claude-sonnet-4`).
+- **`minPassRate?`** — Minimum historical pass rate (0–1, default 0.6). Models below this are excluded unless none qualify.
+
+On cold start (no history for a model+task class), the model is assumed to have a 0.5 pass rate and its cost is estimated via the cost manager. Recorded outcomes (via `agents.run` completion + `store.recordOutcome`) influence subsequent routes — read-your-writes within the same session.
+
 ## Example forgery_exec program using media
 
 ```ts
