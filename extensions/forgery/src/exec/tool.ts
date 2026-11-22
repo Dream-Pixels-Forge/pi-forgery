@@ -25,6 +25,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { AgentToolResult, AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import { ForgeryActivityStore } from "../activity/store";
+import { distill } from "../activity/distill";
 import type { ForgerySubgoalStatus } from "../activity/types";
 import { AgentRunner } from "../agents/runner";
 import {
@@ -39,6 +40,8 @@ import {
 } from "./runtime";
 import {
   ActivityAgentsSchema,
+  ActivityDistillResultSchema,
+  ActivityDistillSchema,
   ActivityExportSchema,
   ActivityImportSchema,
   ActivityRunsSchema,
@@ -1096,6 +1099,23 @@ registry.register({
       return {
         value: subs,
         preview: `${subs.length} subgoal(s) for ${goalId.slice(0, 8)}`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "activity.distill",
+    schema: ActivityDistillSchema,
+    kind: "tool",
+    execute: async (args) => {
+      const minOccurrences = args.minOccurrences !== undefined ? Number(args.minOccurrences) : undefined;
+      const windowMs = args.windowMs !== undefined ? Number(args.windowMs) : undefined;
+      const n = args.n !== undefined ? Number(args.n) : undefined;
+
+      const patterns = distill(activity, { minOccurrences, windowMs, n });
+      return {
+        value: patterns,
+        preview: `${patterns.length} distilled pattern(s)`,
       };
     },
   });

@@ -395,6 +395,32 @@ export const ActivitySubgoalsSchema = Type.Object({
   goalId: Type.Optional(Type.String({ description: "Filter subgoals by goal/run id." })),
 });
 
+// ── Activity distill (pattern mining) ─────────────────────────────────────
+
+export const ActivityDistillSchema = Type.Object({
+  minOccurrences: Type.Optional(
+    Type.Number({ description: "Minimum runs a pattern must appear in (default 2).", minimum: 1 }),
+  ),
+  windowMs: Type.Optional(
+    Type.Number({ description: "Only consider runs finished within this many ms (default 7 days).", minimum: 1 }),
+  ),
+  n: Type.Optional(
+    Type.Number({ description: "Call-sequence length to mine (default 3).", minimum: 2, maximum: 10 }),
+  ),
+});
+
+export const ActivityDistillResultSchema = Type.Array(
+  Type.Object({
+    pattern: Type.String(),
+    suggestedName: Type.String(),
+    occurrences: Type.Number(),
+    avgCost: Type.Number(),
+    avgDuration: Type.Number(),
+    firstSeen: Type.Number(),
+    lastSeen: Type.Number(),
+  }),
+);
+
 // ── Activity export / import ──────────────────────────────────────────────
 
 export const ActivityExportSchema = Type.Object({
