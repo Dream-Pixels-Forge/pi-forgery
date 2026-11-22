@@ -117,6 +117,7 @@ export function makeRegistry(
   runner: AgentRunner,
   activity: ForgeryActivityStore,
   liveCtx: ExtensionContext | undefined,
+  costManager?: CostManager,
 ): HostCallRegistry {
   const registry = new HostCallRegistry();
 
@@ -840,12 +841,13 @@ export function makeRegistry(
 
   // ── Cost Management host calls ───────────────────────────────────────
 
-// Create a cost manager for this execution context
-const costManager = createCostManager(activity);
+// Use the shared cost manager (created in index.ts), falling back to a
+// fresh one if none was provided (e.g. makeRegistry called standalone).
+const costManagerParam = costManager ?? createCostManager(activity);
 
 // Model routing intelligence — recommends cheapest model with
 // sufficient historical pass rate for a given task class.
-const modelRouter = new ModelRouter(activity, costManager);
+const modelRouter = new ModelRouter(activity, costManagerParam);
 
 // Estimate cost before running
 registry.register({
@@ -860,7 +862,7 @@ registry.register({
     
     if (!taskDescription) return { error: "cost.estimate: taskDescription is required" };
     
-    const estimate = costManager.estimateCost(model, taskDescription, template, contextTokens);
+    const estimate = costManagerParam.estimateCost(model, taskDescription, template, contextTokens);
     return { value: estimate, preview: `estimate: ~$${estimate.estimatedCost.toFixed(4)} (${estimate.estimatedInputTokens}→${estimate.estimatedOutputTokens} tokens)` };
   },
 });
@@ -874,7 +876,7 @@ registry.register({
     const runId = args.runId ? String(args.runId) : hctx.runId;
     const format = args.format ? String(args.format) : "text";
     
-    const report = costManager.exportReport(runId);
+    const report = costManagerParam.exportReport(runId);
     return { value: report, preview: `cost report: ${runId.slice(0, 8)}` };
   },
 });
@@ -888,7 +890,7 @@ registry.register({
     const runId = String(args.runId ?? "");
     if (!runId) return { error: "cost.optimize: runId is required" };
     
-    const recommendations = costManager.getOptimizationRecommendations(runId);
+    const recommendations = costManagerParam.getOptimizationRecommendations(runId);
     return { value: recommendations, preview: `${recommendations.length} optimization(s) found` };
   },
 });
@@ -909,7 +911,7 @@ registry.register({
       warningThreshold: args.warningThreshold ? Number(args.warningThreshold) : undefined,
     };
     
-    costManager.setBudget(runId, budget);
+    costManagerParam.setBudget(runId, budget);
     return { value: { ok: true, budget }, preview: `budget set for ${runId.slice(0, 8)}` };
   },
 });
@@ -923,7 +925,7 @@ registry.register({
     const runId = args.runId ? String(args.runId) : hctx.runId;
     const agentId = args.agentId ? String(args.agentId) : undefined;
     
-    const run = costManager.getRunCost(runId);
+    const run = costManagerParam.getRunCost(runId);
     if (!run) return { error: `cost.records: run ${runId} not found` };
     
     let records = run.agentCosts;
@@ -939,7 +941,7 @@ registry.register({
   schema: Type.Object({}),
   kind: "tool",
   execute: async () => {
-    const totals = costManager.getTotalCosts();
+    const totals = costManagerParam.getTotalCosts();
     return { value: totals, preview: `global: $${totals.totalCost.toFixed(4)} | ${totals.runCount} runs | ${totals.agentCount} agents` };
   },
 });

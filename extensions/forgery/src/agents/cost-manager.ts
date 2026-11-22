@@ -247,6 +247,32 @@ export class CostManager {
   }
 
   /**
+   * Budget status for a run: { pctUsed, overSoft, overHard }.
+   * overSoft = at or above warning threshold (default 80%).
+   * overHard = at or above maxCostPerRun (100%).
+   */
+  budgetStatus(runId: string): {
+    pctUsed: number;
+    overSoft: boolean;
+    overHard: boolean;
+  } {
+    const run = this.runCosts.get(runId);
+    const budget = run?.budget;
+    if (!budget || !budget.maxCostPerRun) {
+      return { pctUsed: 0, overSoft: false, overHard: false };
+    }
+    const pctUsed = budget.maxCostPerRun > 0
+      ? (run.totalCost / budget.maxCostPerRun) * 100
+      : 0;
+    const warningThreshold = budget.warningThreshold ?? 0.8;
+    return {
+      pctUsed,
+      overSoft: pctUsed >= warningThreshold * 100,
+      overHard: pctUsed >= 100,
+    };
+  }
+
+  /**
    * Set budget for a run
    */
   setBudget(runId: string, budget: CostBudget): void {

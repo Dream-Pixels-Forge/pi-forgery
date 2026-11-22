@@ -48,6 +48,8 @@ export interface ForgeryFooterContext {
   effort: () => string | null;
   /** CI status: "passing" | "failing" | "running" | "none", or null. */
   ciStatus: () => string | null;
+  /** Budget status for the active run: { pctUsed, overSoft, overHard }. */
+  budgetStatus: () => { pctUsed: number; overSoft: boolean; overHard: boolean } | null;
 }
 
 /** A footer segment: a piece of the status line with a priority and min width. */
@@ -216,6 +218,25 @@ export class ForgeryFooter implements Component {
       },
     });
 
+    // Budget alert (priority 0 — survives at any width).
+    segs.push({
+      id: "budget",
+      priority: 0,
+      align: "right",
+      minWidth: 10,
+      render: () => {
+        const bs = this.#readBudgetStatus();
+        if (!bs) return undefined;
+        if (bs.overHard) {
+          return theme.fg("error", `⚠ budget ${bs.pctUsed.toFixed(0)}%`);
+        }
+        if (bs.overSoft) {
+          return theme.fg("warning", `⚠ budget ${bs.pctUsed.toFixed(0)}%`);
+        }
+        return undefined;
+      },
+    });
+
     // Active run / recent run segment.
     segs.push({
       id: "run",
@@ -314,6 +335,15 @@ export class ForgeryFooter implements Component {
   #readCiStatus(): string | null {
     try {
       return this.footerCtx.ciStatus();
+    } catch {
+      return null;
+    }
+  }
+
+  /** Read live budget status, degrading on invalid context. */
+  #readBudgetStatus(): { pctUsed: number; overSoft: boolean; overHard: boolean } | null {
+    try {
+      return this.footerCtx.budgetStatus();
     } catch {
       return null;
     }

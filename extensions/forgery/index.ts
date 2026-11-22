@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { ForgeryActivityStore } from "./src/activity/store";
 import { AgentRunner } from "./src/agents/runner";
+import { createCostManager, type CostManager } from "./src/agents/cost-manager";
 import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
 import { showImage, showVideo } from "./src/exec/display";
 import { ForgeryUiController } from "./src/ui/controller";
@@ -31,6 +32,7 @@ import { createEngine } from "./src/workflow/engine";
 /** Module-level singletons — re-used across sessions in one process. */
 let store: ForgeryActivityStore;
 let runner: AgentRunner;
+let costManager: CostManager;
 let ui: ForgeryUiController;
 let hostCallNames: string[];
 
@@ -38,10 +40,16 @@ function ensureSingletons() {
   if (store) return;
   store = new ForgeryActivityStore();
   runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 4 });
+  costManager = createCostManager(store);
   // Seed the host-call registry once so the UI settings view can list them.
-  const registry = makeRegistry(runner, store, undefined as unknown as ExtensionContext);
+  const registry = makeRegistry(
+    runner,
+    store,
+    undefined as unknown as ExtensionContext,
+    costManager,
+  );
   hostCallNames = registry.list().sort();
-  ui = new ForgeryUiController(store, runner, hostCallNames, {
+  ui = new ForgeryUiController(store, runner, costManager, hostCallNames, {
     widget: true,
     footer: true,
     maxRows: 8,

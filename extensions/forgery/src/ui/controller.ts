@@ -17,6 +17,7 @@ import type { Component, KeybindingsManager, TUI } from "@earendil-works/pi-tui"
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { ForgeryActivityStore } from "../activity/store";
 import { AgentRunner } from "../agents/runner";
+import type { CostManager } from "../agents/cost-manager";
 import type { ForgerySnapshot } from "../activity/types";
 import { ForgeryDashboard } from "./dashboard";
 import { ForgeryFooter, type ForgeryFooterContext } from "./footer";
@@ -58,6 +59,7 @@ export interface ForgeryUiOptions {
 export class ForgeryUiController {
   private store: ForgeryActivityStore;
   private runner: AgentRunner;
+  private costManager: CostManager;
   private options: Required<ForgeryUiOptions>;
 
   private ui?: ExtensionUIContext;
@@ -71,6 +73,10 @@ export class ForgeryUiController {
   private unsubscribeStore?: () => void;
   private unsubscribeAgents?: () => void;
   private started = false;
+  /** Runs currently over soft budget threshold — tracked to avoid duplicate events. */
+  #budgetWarned = new Set<string>();
+  /** Runs currently over hard budget — tracked to avoid duplicate stop events. */
+  #budgetStopped = new Set<string>();
   private gitBranchReader: GitBranchReader;
   private githubStats: GitHubStatsReader;
   private contextUsageReader: ContextUsageReader;
@@ -86,11 +92,13 @@ export class ForgeryUiController {
   constructor(
     store: ForgeryActivityStore,
     runner: AgentRunner,
+    costManager: CostManager,
     hostCalls: string[],
     options: ForgeryUiOptions = {},
   ) {
     this.store = store;
     this.runner = runner;
+    this.costManager = costManager;
     this.hostCalls = hostCalls;
     this.gitBranchReader = new GitBranchReader(this.#requestRender);
     this.githubStats = new GitHubStatsReader(undefined, this.#requestRender);
@@ -157,6 +165,9 @@ export class ForgeryUiController {
     this.#syncAgentsToStore();
     const snap = this.store.snapshot();
 
+    // Mid-run budget enforcement: warn at 80%, hard-stop at 100%.
+    this.#checkBudgets(snap);
+
     // Auto-compact the active run when context usage is high, respecting the
     // cooldown so a compact (which bumps the store revision) cannot retrigger
     // refresh in an infinite loop.
@@ -188,6 +199,35 @@ export class ForgeryUiController {
     this.#lastCompactAt = now;
   }
 
+  /** Mid-run budget enforcement: warn at soft threshold, hard-stop at hard. */
+  #checkBudgets(snap: ForgerySnapshot): void {
+    for (const run of snap.runs) {
+      if (run.status !== "running") continue;
+      const bs = this.costManager.budgetStatus(run.id);
+      if (!bs) continue;
+
+      if (bs.overHard && !this.#budgetStopped.has(run.id)) {
+        this.#budgetStopped.add(run.id);
+        this.store.finish(run.id, false, "budget exceeded");
+        this.store.event(run.id, {
+          message: `budget exceeded ($${run.metrics?.cost?.toFixed(4) ?? "0"} / max) — run stopped`,
+          level: "error",
+          data: { kind: "budget-exceeded", runId: run.id },
+        });
+        continue;
+      }
+
+      if (bs.overSoft && !this.#budgetWarned.has(run.id)) {
+        this.#budgetWarned.add(run.id);
+        this.store.event(run.id, {
+          message: `budget warning: ${bs.pctUsed.toFixed(0)}% of max cost used`,
+          level: "warning",
+          data: { kind: "budget-warning", runId: run.id, pctUsed: bs.pctUsed },
+        });
+      }
+    }
+  }
+
   /** Ask the TUI for a frame so live readouts keep ticking. */
   #tick(): void {
     if (!this.ui || !this.started) return;
@@ -201,6 +241,7 @@ export class ForgeryUiController {
         r.subgoals.some((s) => s.status === "running" || s.status === "blocked"),
       );
     if (!live) return;
+    this.#checkBudgets(snap);
     this.ui.setStatus(STATUS_KEY, this.#statusString(snap) || undefined);
   }
 
@@ -354,6 +395,11 @@ export class ForgeryUiController {
       modelId: () => this.#read((c) => c.model?.id),
       effort: () => this.#read((c) => c.thinkingLevel) ?? null,
       ciStatus: () => this.githubStats.ciStatus(),
+      budgetStatus: () => {
+        const activeId = this.store.activeRunId();
+        if (!activeId) return null;
+        return this.costManager.budgetStatus(activeId);
+      },
     };
     this.footer = new ForgeryFooter(
       () => this.ui!.theme,

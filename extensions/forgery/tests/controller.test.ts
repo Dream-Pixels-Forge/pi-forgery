@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { ForgeryUiController } from "../src/ui/controller.js";
 import { ForgeryActivityStore } from "../src/activity/store.js";
 import { AgentRunner } from "../src/agents/runner.js";
+import { createCostManager } from "../src/agents/cost-manager.js";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /** A minimal Theme stub that just tags text with a marker. */
@@ -50,7 +51,7 @@ async function flush(): Promise<void> {
 test("ForgeryUiController: footer reads host state live, not frozen at mount", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui, state } = stubUi();
 
   let percent = 10;
@@ -96,7 +97,7 @@ test("ForgeryUiController: footer reads host state live, not frozen at mount", a
 test("ForgeryUiController: a stale extension context degrades instead of throwing", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui, state } = stubUi();
 
   // Pi invalidates the context after newSession/fork/switchSession/reload —
@@ -129,7 +130,7 @@ test("ForgeryUiController: a stale extension context degrades instead of throwin
 test("ForgeryUiController: refresh does not re-notify the store when nothing changed", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui } = stubUi();
 
   let notifications = 0;
@@ -162,7 +163,7 @@ test("ForgeryUiController: refresh does not re-notify the store when nothing cha
 test("ForgeryUiController: auto-compacts active run when context usage is high", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui } = stubUi();
 
   let percent = 95;
@@ -196,7 +197,7 @@ test("ForgeryUiController: auto-compacts active run when context usage is high",
 test("ForgeryUiController: does not auto-compact when context usage is low", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui } = stubUi();
 
   let percent = 30;
@@ -225,7 +226,7 @@ test("ForgeryUiController: does not auto-compact when context usage is low", asy
 test("ForgeryUiController: does not auto-compact when no active run", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui } = stubUi();
 
   const ctx = {
@@ -249,7 +250,7 @@ test("ForgeryUiController: does not auto-compact when no active run", async () =
 test("ForgeryUiController: idle refresh does not read host context usage", async () => {
   const store = new ForgeryActivityStore();
   const runner = new AgentRunner({ piBinary: "pi", maxConcurrent: 1 });
-  const controller = new ForgeryUiController(store, runner, []);
+  const controller = new ForgeryUiController(store, runner, createCostManager(store), []);
   const { ui } = stubUi();
 
   let contextUsageCalls = 0;

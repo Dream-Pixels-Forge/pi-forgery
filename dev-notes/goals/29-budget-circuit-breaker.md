@@ -7,19 +7,22 @@ Add mid-run budget enforcement to `forgery_exec`: when a run crosses 80% of `max
 pi-forgery's cost manager already tracks `maxCostPerRun` and checks budgets *before* spawning (goal 25-area). But a run can still blow past budget mid-flight because checks are pre-flight only. The controller's refresh loop already ticks every second; adding a budget check there — plus the footer's priority segment system — gives honest, mid-run enforcement with no new data model.
 
 ## Deliverables
-- [ ] `src/ui/controller.ts` — in the refresh loop, check `cost.budgetStatus()` per active run: ≥80% → emit `budget-warning` event + footer priority segment; ≥100% → hard-stop run + `budget-exceeded` event (+~40 lines)
-- [ ] `src/ui/footer.ts` — render `⚠ budget` as priority-0 segment when a run is over threshold (+~10 lines)
-- [ ] `src/cost.ts` (or existing cost module) — `budgetStatus()` returning `{ pctUsed, overSoft, overHard }` (+~15 lines, or extend existing)
-- [ ] `extensions/forgery/tests/budget.test.ts` — unit tests: 80% triggers warning segment, 100% hard-stops run, no false positives below threshold (+~50 lines)
-- [ ] `docs/budget.md` — document budget thresholds + footer segment (+one section)
+- [x] `src/agents/cost-manager.ts` — `budgetStatus(runId)` returning `{ pctUsed, overSoft, overHard }`
+- [x] `src/ui/controller.ts` — `#checkBudgets()` in refresh loop + heartbeat: ≥80% warning event, ≥100% hard-stop
+- [x] `src/ui/footer.ts` — `⚠ budget NN%` priority-0 segment
+- [x] `extensions/forgery/index.ts` — shared cost manager singleton, passed to makeRegistry + controller
+- [x] `src/exec/tool.ts` — accept shared cost manager parameter
+- [x] `extensions/forgery/tests/budget.test.ts` — unit tests: budgetStatus thresholds, hard-stop, warning, no-budget case
+- [x] `extensions/forgery/tests/controller.test.ts` — updated to pass cost manager
+- [x] `docs/budget.md` — document budget thresholds + footer segment
 
 ## Definition of Done
-- [ ] root `npm run --silent typecheck` → exit 0
-- [ ] `npx tsx --test tests/*.test.ts` (extensions/forgery) → all pass, 0 fail
-- [ ] At ≥80% of `maxCostPerRun`, footer shows `⚠ budget` segment and a budget-warning event is recorded
-- [ ] At ≥100%, active run is hard-stopped and `budget-exceeded` event recorded
-- [ ] Idle / below-threshold runs render footer unchanged — no regressions
-- [ ] `git diff main --stat` → changes confined to `extensions/forgery/` + docs
+- [x] root `npm run --silent typecheck` → exit 0
+- [x] `npx tsx --test tests/*.test.ts` (extensions/forgery) → all pass, 0 fail (242 tests)
+- [x] At ≥80% of `maxCostPerRun`, `budget-warning` event recorded + `⚠ budget NN%` footer segment
+- [x] At ≥100%, active run hard-stopped + `budget-exceeded` event recorded
+- [x] Idle / below-threshold runs render footer unchanged — no regressions (verified via existing controller tests + budget.test.ts no-budget case)
+- [x] `git diff main --stat` → changes confined to `extensions/forgery/` + docs
 
 ## Verification Steps
 1. `npm run --silent typecheck` → exit 0
