@@ -1,3 +1,9 @@
+---
+title: Workflows
+layout: default
+permalink: /workflows.html
+---
+
 # Workflows
 
 pi-forgery ships a Goldfish-style workflow engine (`workflow.run`) plus three

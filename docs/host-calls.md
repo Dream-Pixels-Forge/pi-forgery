@@ -1,3 +1,9 @@
+---
+title: Host Calls
+layout: default
+permalink: /host-calls.html
+---
+
 # Host calls
 
 These calls are available inside `forgery_exec` programs, alongside the core

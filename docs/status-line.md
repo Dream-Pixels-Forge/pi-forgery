@@ -1,3 +1,9 @@
+---
+title: Status Line / Footer
+layout: default
+permalink: /status-line.html
+---
+
 # Status line / footer
 
 When a run is active the footer shows:

@@ -1,3 +1,9 @@
+---
+title: Usage
+layout: default
+permalink: /usage.html
+---
+
 # Usage
 
 You ask in plain language. Pi writes one `forgery_exec` program that composes

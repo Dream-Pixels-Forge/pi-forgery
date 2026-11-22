@@ -1,3 +1,9 @@
+---
+title: Commands
+layout: default
+permalink: /commands.html
+---
+
 # Commands
 
 All commands are prefixed with `/forgery`.

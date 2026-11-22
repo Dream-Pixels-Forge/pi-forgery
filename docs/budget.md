@@ -1,3 +1,9 @@
+---
+title: Budget Circuit Breaker
+layout: default
+permalink: /budget.html
+---
+
 # Budget Circuit Breaker
 
 pi-forgery enforces cost budgets mid-run so a `forgery_exec` program can't

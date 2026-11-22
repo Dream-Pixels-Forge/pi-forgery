@@ -1,0 +1,39 @@
+# GitHub Pages / Jekyll config for pi-forgery
+title: pi-forgery
+tagline: A focused programmable tool & agent runtime for Pi
+description: >-
+  pi-forgery gives Pi one programmable execution tool (forgery_exec), one-shot
+  agent runs, a live activity widget, a status-line footer, terminal
+  image/video display, and a /forgery dashboard — all driven by a single
+  in-memory activity snapshot.
+url: https://dream-pixels-forge.github.io
+baseurl: /pi-forgery/docs
+
+theme: jekyll-theme-cayman
+
+author: Dream Pixels Forge
+license: MIT
+
+repository: Dream-Pixels-Forge/pi-forgery
+
+permalink: pretty
+
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "page"
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - package.json
+  - package-lock.json
+  - pnpm-lock.yaml
+  - tsconfig.json

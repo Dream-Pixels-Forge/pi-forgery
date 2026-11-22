@@ -1,3 +1,9 @@
+---
+title: pi-forgery
+layout: default
+permalink: /
+---
+
 # pi-forgery
 
 An improved, focused programmable tool and agent runtime for Pi.

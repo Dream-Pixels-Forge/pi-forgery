@@ -1,3 +1,9 @@
+---
+title: Non-Goals
+layout: default
+permalink: /non-goals.html
+---
+
 # Non-goals
 
 These are parts pi-forgery deliberately does NOT do:

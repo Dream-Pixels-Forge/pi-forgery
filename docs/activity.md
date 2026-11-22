@@ -1,3 +1,9 @@
+---
+title: Activity Distill
+layout: default
+permalink: /activity.html
+---
+
 # Activity Distill
 
 `activity.distill` mines pi-forgery's activity store for repeated host-call

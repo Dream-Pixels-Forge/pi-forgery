@@ -1,3 +1,9 @@
+---
+title: Development
+layout: default
+permalink: /development.html
+---
+
 # Development
 
 ```sh

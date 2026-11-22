@@ -1,3 +1,9 @@
+---
+title: Repository Layout
+layout: default
+permalink: /layout.html
+---
+
 # Repository layout
 
 ```
