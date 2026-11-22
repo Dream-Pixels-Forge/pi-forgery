@@ -56,6 +56,8 @@ import {
   CostOptimizationSchema,
   CostRecordSchema,
   CostReportSchema,
+  WorkflowChainSchema,
+  WorkflowGateSchema,
   DevLoopRun,
   DevLoopResultSchema,
   PiBash,
@@ -88,6 +90,7 @@ import { CostManager, createCostManager, type CostBudget } from "../agents/cost-
 import { ModelRouter } from "../agents/router";
 import { loadConfig, type ForgeryConfig } from "../config";
 import { createEngine } from "../workflow/engine";
+import { WorkflowChain } from "../workflow/chain";
 import { createResolver } from "../workflow/resolver";
 import { showImage, showImages, showVideo, type ShowImageResult } from "./display";
 import { box, formatCallSummary, formatDuration, oneLine } from "../ui/format";
@@ -123,6 +126,9 @@ export function makeRegistry(
     runner,
     liveCtx?.cwd ?? process.cwd(),
   );
+
+  // Workflow chain — composes pipelines into sequential pipelines with gates.
+  const workflowChain = new WorkflowChain(engine, activity);
 
   // Enhanced agent runner for high-accuracy one-shot agents
   const enhancedRunner = createEnhancedAgentRunner(runner);
@@ -1232,6 +1238,58 @@ registry.register({
         },
         preview: `resolve ${result.applied} fix(es), ${result.contested} contest(s), re-audited: ${result.reAudited}`,
         error: undefined,
+      };
+    },
+  });
+
+  // ── Workflow chain (pipeline composition) ────────────────────────────
+
+  registry.register({
+    ref: "workflow.chain",
+    schema: WorkflowChainSchema,
+    kind: "agent",
+    execute: async (args, hctx) => {
+      const rawSteps = Array.isArray(args.steps) ? args.steps : [];
+      if (rawSteps.length === 0) {
+        return { error: "workflow.chain: steps array required" };
+      }
+
+      const normalized: Array<{ pipeline: string; target?: string; context?: string[]; mode?: string; gate?: "proceed" | "pause" | "abort" }> = rawSteps.map((s) => {
+        const step = s as { pipeline?: unknown; target?: unknown; context?: unknown; mode?: unknown; gate?: unknown };
+        return {
+          pipeline: String(step.pipeline ?? ""),
+          target: step.target ? String(step.target) : undefined,
+          context: Array.isArray(step.context) ? step.context.filter((x): x is string => typeof x === "string") : undefined,
+          mode: typeof step.mode === "string" ? step.mode : undefined,
+          gate: (step.gate === "proceed" || step.gate === "pause" || step.gate === "abort") ? step.gate : undefined,
+        };
+      });
+
+      const result = await workflowChain.run(normalized, hctx.runId);
+      return {
+        value: result,
+        preview: `chain ${result.status}: ${result.steps.length} step(s)`,
+        error: result.status === "failed" ? result.error : undefined,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "workflow.gate",
+    schema: WorkflowGateSchema,
+    kind: "tool",
+    execute: async (args) => {
+      const chainId = String(args.chainId ?? "");
+      const gate = String(args.gate ?? "");
+      if (!["proceed", "pause", "abort"].includes(gate)) {
+        return { error: `workflow.gate: gate must be proceed | pause | abort, got ${gate}` };
+      }
+      const run = activity.get(chainId);
+      if (!run) return { error: `workflow.gate: unknown chain run ${chainId}` };
+      workflowChain.setGate(chainId, gate as "proceed" | "pause" | "abort");
+      return {
+        value: { chainId, gate },
+        preview: `gate ${chainId.slice(0, 8)} → ${gate}`,
       };
     },
   });

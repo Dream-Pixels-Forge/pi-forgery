@@ -438,3 +438,23 @@ export const CostReportSchema = Type.Object({
 export const CostOptimizationSchema = Type.Object({
   runId: Type.String(),
 });
+
+// ── Workflow chain (pipeline composition) host calls ───────────────────
+
+export const WorkflowChainSchema = Type.Object({
+  steps: Type.Array(
+    Type.Object({
+      pipeline: Type.String({ description: "Pipeline id (review, brainstorm, drift-report, bootstrap)." }),
+      target: Type.Optional(Type.String({ description: "Target file path. Defaults to previous step's consolidated artifact." })),
+      context: Type.Optional(Type.Array(Type.String(), { description: "GoldfishContext reading list." })),
+      mode: Type.Optional(Type.String({ description: "Review mode: BRAINSTORM | REVIEW (default REVIEW)." })),
+      gate: Type.Optional(Type.String({ enum: ["proceed", "pause", "abort"], description: "Gate after this step completes." })),
+    }),
+    { description: "Pipeline steps to run in sequence." },
+  ),
+});
+
+export const WorkflowGateSchema = Type.Object({
+  chainId: Type.String({ description: "Chain run id returned by workflow.chain." }),
+  gate: Type.String({ enum: ["proceed", "pause", "abort"], description: "Gate state to set for the chain." }),
+});
