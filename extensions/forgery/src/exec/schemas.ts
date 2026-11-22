@@ -484,3 +484,7 @@ export const WorkflowGateSchema = Type.Object({
   chainId: Type.String({ description: "Chain run id returned by workflow.chain." }),
   gate: Type.String({ enum: ["proceed", "pause", "abort"], description: "Gate state to set for the chain." }),
 });
+
+export const WorkflowResumeSchema = Type.Object({
+  chainId: Type.String({ description: "Chain run id returned by workflow.chain." }),
+});

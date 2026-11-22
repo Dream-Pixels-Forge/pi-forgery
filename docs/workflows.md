@@ -1,9 +1,10 @@
 # Workflows
 
-pi-forgery ships a Goldfish-style workflow engine (`workflow.run`) plus two
-composition host calls: `workflow.chain` (pipeline pipelines) and
-`workflow.gate` (pause/abort/resume control). All runs are recorded in the
-activity store and surface in the widget/footer/dashboard.
+pi-forgery ships a Goldfish-style workflow engine (`workflow.run`) plus three
+composition host calls: `workflow.chain` (pipeline pipelines),
+`workflow.gate` (pause/abort control), and `workflow.resume` (durable journal
+resume). All runs are recorded in the activity store and surface in the
+widget/footer/dashboard.
 
 ## Bundled pipelines
 
@@ -61,6 +62,30 @@ workflow.gate({ chainId: "<runId from workflow.chain>", gate: "proceed" })
 Overrides the gate state for a paused chain run. Valid gates: `proceed`,
 `pause`, `abort`. Gate state is stored in the activity store, so a pause
 survives across `forgery_exec` calls and can be resumed later.
+
+## `workflow.resume`
+
+```ts
+workflow.resume({ chainId: "<runId from workflow.chain>" })
+```
+
+Resumes a paused or interrupted chain from its durable journal. Returns:
+
+- `status: "already-complete"` — all steps finished; `completedSteps` lists them.
+- `status: "resumable"` — some steps done; `completedSteps` lists them, `nextStep`
+  is the index of the next step to run.
+- `status: "not-found"` — no journal exists for that chain id.
+
+Journal files are written to `.pi/forgery/journal/<runId>.json` (write-ahead
+before each phase, updated on completion — crash-safe). Resume is idempotent.
+
+## Durable journal
+
+Every `workflow.chain` run writes a journal entry to
+`.pi/forgery/journal/<runId>.json` before each step starts and updates it on
+completion. If Pi restarts mid-chain, `workflow.resume(runId)` replays
+completed steps and continues from the first incomplete one — no lost phase
+state.
 
 ## Activity surface
 

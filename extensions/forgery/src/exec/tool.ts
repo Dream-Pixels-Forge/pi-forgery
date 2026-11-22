@@ -61,6 +61,7 @@ import {
   CostReportSchema,
   WorkflowChainSchema,
   WorkflowGateSchema,
+  WorkflowResumeSchema,
   DevLoopRun,
   DevLoopResultSchema,
   PiBash,
@@ -1312,6 +1313,24 @@ registry.register({
       return {
         value: { chainId, gate },
         preview: `gate ${chainId.slice(0, 8)} → ${gate}`,
+      };
+    },
+  });
+
+  registry.register({
+    ref: "workflow.resume",
+    schema: WorkflowResumeSchema,
+    kind: "tool",
+    execute: async (args) => {
+      const chainId = String(args.chainId ?? "");
+      if (!chainId) return { error: "workflow.resume: chainId is required" };
+      const result = workflowChain.resume(chainId);
+      if (result.status === "not-found") {
+        return { error: `workflow.resume: no journal for chain ${chainId}` };
+      }
+      return {
+        value: result,
+        preview: `resume ${result.status}: ${result.completedSteps.length} step(s) done, next step ${result.nextStep}`,
       };
     },
   });

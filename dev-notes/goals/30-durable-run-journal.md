@@ -7,18 +7,18 @@ Persist workflow phase state + artifacts so a long `workflow.chain` (or multi-pr
 Goal 24 (activity export/replay) gives snapshot export/import, but workflows have no mid-chain resume. A long chain (`bootstrap → implement → drift-report → resolver`) interrupted by a Pi restart loses all phase state. The durable journal stores phase status + artifact paths in `.pi/forgery/journal/` keyed by runId; on restart, `workflow.resume(runId)` replays completed phases and continues.
 
 ## Deliverables
-- [ ] `src/workflow/journal.ts` — `WorkflowJournal` class: `write(runId, phase, status, artifacts)` / `read(runId)` / `list()` backed by JSON files in `.pi/forgery/journal/` (+~70 lines)
-- [ ] `src/workflow/chain.ts` (or new `workflow.ts`) — integrate journal writes at phase boundaries in `workflow.chain` (+~20 lines)
-- [ ] `src/exec/tool.ts` — register `workflow.resume(runId)` host call (+~15 lines)
-- [ ] `extensions/forgery/tests/journal.test.ts` — unit tests: write/read/list JSON, resume skips completed phases (+~50 lines)
-- [ ] `docs/workflows.md` — document `workflow.resume` + journal location (+one section)
+- [x] `src/workflow/journal.ts` — `WorkflowJournal` class: `write()` / `read()` / `list()` / `exists()` backed by JSON files in `.pi/forgery/journal/`
+- [x] `src/workflow/chain.ts` — journal writes at phase boundaries; `resume(runId)` method
+- [x] `src/exec/tool.ts` — register `workflow.resume(runId)` host call
+- [x] `extensions/forgery/tests/journal.test.ts` — unit tests: write/read/list JSON, resume skips completed phases, idempotent
+- [x] `docs/workflows.md` — document `workflow.resume` + durable journal
 
 ## Definition of Done
-- [ ] root `npm run --silent typecheck` → exit 0
-- [ ] `npx tsx --test tests/*.test.ts` (extensions/forgery) → all pass, 0 fail
-- [ ] `workflow.resume(runId)` returns completed phases + next phase to run
-- [ ] Journal files are valid JSON in `.pi/forgery/journal/<runId>.json`
-- [ ] `git diff main --stat` → changes confined to `extensions/forgery/` + docs
+- [x] root `npm run --silent typecheck` → exit 0
+- [x] `npx tsx --test tests/*.test.ts` (extensions/forgery) → all pass, 0 fail (252 tests)
+- [x] `workflow.resume(runId)` returns completed phases + next step to run
+- [x] Journal files are valid JSON in `.pi/forgery/journal/<runId>.json`
+- [x] `git diff main --stat` → changes confined to `extensions/forgery/` + docs
 
 ## Verification Steps
 1. `npm run --silent typecheck` → exit 0
