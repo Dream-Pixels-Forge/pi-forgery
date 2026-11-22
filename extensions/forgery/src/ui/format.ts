@@ -4,6 +4,7 @@
  * trivially unit-testable and usable from both TUI components and CLI.
  */
 
+import { homedir } from "node:os";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import type {
   ForgeryAgentRecord,
@@ -160,6 +161,13 @@ export function formatCost(cost: number | null | undefined): string {
   if (cost < 0.01) return `$${cost.toFixed(4)}`;
   if (cost < 1) return `$${cost.toFixed(2)}`;
   return `$${cost.toFixed(1)}`;
+}
+
+/** Shorten a working directory: `$HOME` → `~`, nested paths become `~/…`.
+ *  Anything outside `$HOME` is returned verbatim. */
+export function shortenCwd(cwd: string): string {
+  const home = homedir();
+  return cwd === home ? "~" : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
 }
 
 /** Milliseconds → "3m12s", "45s", "1h20m", "—" when undefined. */

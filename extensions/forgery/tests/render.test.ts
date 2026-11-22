@@ -4,6 +4,7 @@
  * produce the expected line shapes.
  */
 
+import { homedir } from "node:os";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ForgeryFooter, type ForgeryFooterContext } from "../src/ui/footer.js";
@@ -50,6 +51,29 @@ test("ForgeryFooter: renders idle when no runs", () => {
   assert.match(cleanWidth(lines[0]), /ctx \[███░░░\] 42%/);
   assert.match(cleanWidth(lines[0]), /minimax m3\.1 flash ●●○/); // shortModel + effort meter
   assert.match(cleanWidth(lines[0]), /21\.3k\/32k/);
+});
+
+test("ForgeryFooter: shows working directory ($HOME shortened to ~)", () => {
+  const store = new ForgeryActivityStore();
+  const home = homedir();
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => null,
+    modelId: () => undefined,
+    effort: () => null,
+    ciStatus: () => null,
+    cwd: () => home,
+  };
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
+  assert.match(cleanWidth(footer.render(120)[0]), /~/, "home dir renders as ~");
+
+  const nestedCtx = { ...footerCtx, cwd: () => `${home}/src/ui/footer.ts` };
+  const nestedFooter = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), nestedCtx);
+  assert.match(
+    cleanWidth(nestedFooter.render(120)[0]),
+    /~\/src\/ui\/footer\.ts/,
+    "nested path renders under ~",
+  );
 });
 
 test("ForgeryFooter: renders active run metrics", () => {

@@ -400,6 +400,7 @@ export class ForgeryUiController {
         if (!activeId) return null;
         return this.costManager.budgetStatus(activeId);
       },
+      cwd: () => this.#read((c) => c.cwd),
     };
     this.footer = new ForgeryFooter(
       () => this.ui!.theme,
