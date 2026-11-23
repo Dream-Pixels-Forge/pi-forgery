@@ -83,6 +83,99 @@ test("store: snapshot includes active totals", () => {
   assert.equal(snap.activeTotals?.cost, 0.42);
 });
 
+test("store: mixed call paths use canonical metric accumulation", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  const assertRunMetrics = (tokens: number, toolCalls: number, cost: number) => {
+    const metrics = store.get("run-1")!.metrics!;
+    assert.equal(metrics.tokens, tokens);
+    assert.equal(metrics.toolCalls, toolCalls);
+    assert.ok(Math.abs(metrics.cost - cost) < 1e-10, `cost ${metrics.cost} !== ${cost}`);
+  };
+
+  store.beginCall("run-1", "c1", "agents.run", { task: "first" });
+  store.finishCall("run-1", "c1", {
+    success: true,
+    metrics: { tokens: 100, toolCalls: 1, cost: 0.1 },
+  });
+  assertRunMetrics(100, 1, 0.1);
+
+  store.beginCall("run-1", "c2", "agents.run", { task: "second" });
+  store.updateCall("run-1", "c2", {
+    type: "metrics",
+    metrics: { tokens: 200, toolCalls: 1, cost: 0.2 },
+  });
+  assertRunMetrics(300, 2, 0.3);
+
+  store.finishCall("run-1", "c2", { success: true });
+  assertRunMetrics(300, 2, 0.3);
+  store.finishCall("run-1", "c2", {
+    success: true,
+    metrics: { tokens: 200, toolCalls: 1, cost: 0.2 },
+  });
+  assertRunMetrics(300, 2, 0.3);
+
+  store.finishCall("run-1", "c2", {
+    success: true,
+    metrics: { tokens: 250, toolCalls: 2, cost: 0.25 },
+  });
+  assertRunMetrics(350, 3, 0.35);
+
+  const run = store.get("run-1")!;
+  run.metrics!.tokens += 50;
+  run.metrics!.toolCalls += 1;
+  run.metrics!.cost += 0.05;
+  store.beginCall("run-1", "c3", "agents.run", { task: "third" });
+  store.updateCall("run-1", "c3", {
+    type: "metrics",
+    metrics: { tokens: 25, toolCalls: 1, cost: 0.025 },
+  });
+  assertRunMetrics(425, 5, 0.425);
+});
+
+test("store: undefined metric update preserves the last known baseline", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.beginCall("run-1", "c1", "agents.run", { task: "test" });
+  const metrics = { tokens: 100, toolCalls: 1, cost: 0.1 };
+  store.updateCall("run-1", "c1", { type: "metrics", metrics });
+  store.updateCall("run-1", "c1", { type: "metrics", metrics: undefined });
+  store.finishCall("run-1", "c1", { success: true, metrics });
+
+  const run = store.get("run-1")!;
+  assert.equal(run.metrics!.tokens, 100);
+  assert.equal(run.metrics!.toolCalls, 1);
+  assert.ok(Math.abs(run.metrics!.cost - 0.1) < 1e-10);
+  assert.deepEqual(run.calls[0].metrics, metrics);
+});
+
+test("store: imported calls seed missing run metrics before applying deltas", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "legacy" });
+  for (const callId of ["c1", "c2"]) {
+    store.beginCall("run-1", callId, "agents.run", { task: callId });
+    store.finishCall("run-1", callId, {
+      success: true,
+      metrics: { tokens: 100, toolCalls: 1, cost: 0.1 },
+    });
+  }
+
+  const exported = JSON.parse(store.exportSnapshot());
+  exported.runs[0].metrics = undefined;
+  const imported = new ForgeryActivityStore();
+  imported.importSnapshot(JSON.stringify(exported));
+  assert.equal(imported.get("run-1")!.metrics, undefined);
+
+  imported.updateCall("run-1", "c1", {
+    type: "metrics",
+    metrics: { tokens: 200, toolCalls: 1, cost: 0.2 },
+  });
+  const metrics = imported.get("run-1")!.metrics!;
+  assert.equal(metrics.tokens, 300);
+  assert.equal(metrics.toolCalls, 2);
+  assert.ok(Math.abs(metrics.cost - 0.3) < 1e-10, `cost ${metrics.cost} !== 0.3`);
+});
+
 test("store: run bounds evict oldest", () => {
   const store = new ForgeryActivityStore();
   for (let i = 0; i < 30; i++) store.start(`run-${i}`);

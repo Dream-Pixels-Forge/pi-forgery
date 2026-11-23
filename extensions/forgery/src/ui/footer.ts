@@ -22,10 +22,9 @@ import type { UiStatus } from "./format";
 import {
   effortMeter,
   fit,
-  formatCost,
-  formatDuration,
   formatPercent,
   formatTokens,
+  formatStatusMetrics,
   formatStatusSummary,
   progressBar,
   renderStatus,
@@ -266,18 +265,12 @@ export class ForgeryFooter implements Component {
         const glyph = active
           ? renderStatus(theme, "running", Math.floor(this.clock() / 80) % 10, this.#animations)
           : colorStatusForSnapshot(target.status, theme);
-        const metrics = target.metrics;
-        const calls = metrics?.toolCalls !== undefined ? ` ${metrics.toolCalls} calls` : "";
-        const tokens = metrics?.tokens !== undefined ? ` ${formatTokens(metrics.tokens)} tok` : "";
-        const cost = metrics?.cost !== undefined && metrics.cost > 0 ? ` ${formatCost(metrics.cost)}` : "";
-        const dur =
-          target.finishedAt
-            ? ` · ${formatDuration(target.finishedAt - target.startedAt)}`
-            : active
-            ? ` · ${formatDuration(snap.now - target.startedAt)}`
-            : "";
+        const metrics = formatStatusMetrics(summarizeStatus(snap, this.clock));
         const statusText = active ? "" : ` ${target.status}`;
-        return theme.fg("text", `${glyph} ${theme.bold(target.name)}${calls}${tokens}${cost}${dur}${statusText}`);
+        return theme.fg(
+          "text",
+          `${glyph} ${theme.bold(target.name)}${metrics ? ` · ${metrics}` : ""}${statusText}`,
+        );
       },
     });
 

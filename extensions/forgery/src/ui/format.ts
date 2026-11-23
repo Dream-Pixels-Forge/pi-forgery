@@ -415,7 +415,7 @@ export interface StatusSummary {
   tokens: number | undefined;
   /** Cost, if any. */
   cost: number | undefined;
-  /** Elapsed ms, if a run is active. */
+  /** Elapsed ms for an active run, or frozen wall time for a finished run. */
   elapsed: number | undefined;
   /** Subgoal completed/total, if any subgoals exist. */
   subgoal?: { completed: number; total: number };
@@ -429,32 +429,40 @@ export function summarizeStatus(
   clock: () => number,
 ): StatusSummary {
   const active = snap.runs.find((r) => r.status === "running");
-  if (active) {
-    const totals = snap.activeTotals;
-    const st = snap.subgoalTotals;
+  const target = active ?? snap.runs[0];
+  if (target) {
+    const callTotals = target.calls.reduce<{ tokens?: number; cost?: number }>((totals, call) => {
+      if (call.metrics?.tokens !== undefined) {
+        totals.tokens = (totals.tokens ?? 0) + call.metrics.tokens;
+      }
+      if (call.metrics?.cost !== undefined) {
+        totals.cost = (totals.cost ?? 0) + call.metrics.cost;
+      }
+      return totals;
+    }, {});
+    const runTokens = target.metrics?.tokens;
+    const runCost = target.metrics?.cost;
     return {
-      active: true,
-      glyph: statusGlyph("running"),
-      label: active.name,
-      calls: totals?.calls,
-      tokens: totals?.tokens,
-      cost: totals?.cost,
-      elapsed: active.startedAt ? clock() - active.startedAt : undefined,
-      subgoal: st && st.total > 0 ? { completed: st.completed, total: st.total } : undefined,
-      status: active.status,
-    };
-  }
-  const recent = snap.runs[0];
-  if (recent) {
-    return {
-      active: false,
-      glyph: statusGlyph(recent.status),
-      label: recent.name,
-      calls: undefined,
-      tokens: undefined,
-      cost: undefined,
-      elapsed: undefined,
-      status: recent.status,
+      active: active !== undefined,
+      glyph: statusGlyph(target.status),
+      label: target.name,
+      calls: target.calls.length,
+      tokens: runTokens !== undefined && runTokens !== 0
+        ? runTokens
+        : callTotals.tokens ?? runTokens,
+      cost: runCost !== undefined && runCost !== 0
+        ? runCost
+        : callTotals.cost ?? runCost,
+      elapsed: active
+        ? target.startedAt !== undefined ? clock() - target.startedAt : undefined
+        : target.finishedAt !== undefined ? target.finishedAt - target.startedAt : undefined,
+      subgoal: target.subgoals.length > 0
+        ? {
+            completed: target.subgoals.filter((s) => s.status === "completed").length,
+            total: target.subgoals.length,
+          }
+        : undefined,
+      status: target.status,
     };
   }
   return {
@@ -469,24 +477,30 @@ export function summarizeStatus(
   };
 }
 
+/** Shared run telemetry for the compact status string and custom footer. */
+export function formatStatusMetrics(summary: StatusSummary): string {
+  return statusLine([
+    summary.calls !== undefined
+      ? `${summary.calls} ${summary.calls === 1 ? "call" : "calls"}`
+      : undefined,
+    summary.tokens !== undefined ? `${formatTokens(summary.tokens)} tok` : undefined,
+    summary.cost !== undefined && summary.cost !== 0 ? formatCost(summary.cost) : undefined,
+    summary.elapsed !== undefined ? formatDuration(summary.elapsed) : undefined,
+    summary.subgoal
+      ? `subgoals ${summary.subgoal.completed}/${summary.subgoal.total}`
+      : undefined,
+  ]);
+}
+
 /** Compact status string from a summary.
- *  e.g. "⠹ forgery 2/5 · 1m12s" or "✓ forgery done · $0.42". Empty when idle. */
+ *  e.g. "⠹ forgery · 2 calls · 1m12s" or "✓ forgery completed · $0.42". */
 export function formatStatusSummary(summary: StatusSummary): string {
+  const metrics = formatStatusMetrics(summary);
   if (!summary.active) {
     if (!summary.status) return "forgery · idle";
-    return statusLine([`${summary.glyph} ${summary.label} ${summary.status}`]);
+    return statusLine([`${summary.glyph} ${summary.label} ${summary.status}`, metrics]);
   }
-  const parts: Array<string | undefined> = [
-    `${summary.glyph} ${summary.label}`,
-    summary.calls !== undefined ? `${summary.calls} calls` : undefined,
-    summary.tokens !== undefined ? `${formatTokens(summary.tokens)} tok` : undefined,
-    summary.cost !== undefined ? formatCost(summary.cost) : undefined,
-    summary.elapsed !== undefined ? formatDuration(summary.elapsed) : undefined,
-  ];
-  if (summary.subgoal) {
-    parts.push(`subgoals ${summary.subgoal.completed}/${summary.subgoal.total}`);
-  }
-  return statusLine(parts.filter(Boolean));
+  return statusLine([`${summary.glyph} ${summary.label}`, metrics]);
 }
 
 /** Colored, truncated, single-line label. */
