@@ -19,7 +19,7 @@ import {
   type TerminalCapabilities,
 } from "@earendil-works/pi-tui";
 import { randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { ForgeryActivityStore } from "./src/activity/store";
 import { AgentRunner } from "./src/agents/runner";
@@ -28,6 +28,24 @@ import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
 import { showImage, showVideo } from "./src/exec/display";
 import { ForgeryUiController } from "./src/ui/controller";
 import { createEngine } from "./src/workflow/engine";
+
+// ── cross-session persistence ────────────────────────────────────────────
+// Auto-save the activity snapshot on session shutdown and auto-load it on
+// session start, so model routing outcomes (goal 26) and budget state
+// (goal 29) survive Pi restarts. Uses the existing exportSnapshot /
+// importSnapshot (goal 24). Disabled by FORGERY_AUTO_PERSIST=false.
+const PERSIST_DIR = ".pi/forgery";
+const PERSIST_FILE = "activity-last.json";
+
+function persistPath(ctx: ExtensionContext): string {
+  return pathResolve(ctx.cwd, PERSIST_DIR, PERSIST_FILE);
+}
+
+function autoPersistEnabled(): boolean {
+  const env = process.env.FORGERY_AUTO_PERSIST;
+  if (env !== undefined) return env !== "false" && env !== "0";
+  return true;
+}
 
 /** Module-level singletons — re-used across sessions in one process. */
 let store: ForgeryActivityStore;
@@ -413,14 +431,35 @@ export default function forgery(pi: ExtensionAPI): void {
 
   // ── lifecycle ──────────────────────────────────────────────────────────
   pi.on("session_start", async (_event, ctx: ExtensionContext) => {
-    // Reset the activity store on a fresh session; reseed host-call list.
-    store.reset();
+    if (autoPersistEnabled()) {
+      try {
+        const target = persistPath(ctx);
+        if (existsSync(target)) {
+          store.importSnapshot(readFileSync(target, "utf8"));
+        } else {
+          store.reset();
+        }
+      } catch {
+        // Corrupt or unreadable persistence file — start fresh, never crash.
+        store.reset();
+      }
+    } else {
+      store.reset();
+    }
     ui.start(ctx);
   });
 
-  pi.on("session_shutdown", async (_event: unknown, _ctx: ExtensionContext) => {
+  pi.on("session_shutdown", async (_event: unknown, ctx: ExtensionContext) => {
     ui.stop();
-    // Don't reset the store here — a follow-up session may resume.
+    if (autoPersistEnabled()) {
+      try {
+        const target = persistPath(ctx);
+        mkdirSync(pathDirname(target), { recursive: true });
+        writeFileSync(target, store.exportSnapshot(), "utf8");
+      } catch {
+        // Never crash Pi on persistence failure.
+      }
+    }
   });
 }
 

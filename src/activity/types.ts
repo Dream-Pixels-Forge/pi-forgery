@@ -234,6 +234,8 @@ export interface ForgerySnapshot {
   /** Most-recent run first. */
   runs: ForgeryRun[];
   agents: ForgeryAgentRecord[];
+  /** Model routing outcomes: key is `"model\0taskClass"` → stats. */
+  outcomes: Record<string, { completed: number; failed: number; totalCost: number }>;
   /** The run id that is currently running, or undefined. */
   activeRunId?: string;
   /** Aggregate across active runs: tokens, cost, duration. */

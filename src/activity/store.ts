@@ -627,6 +627,7 @@ export class ForgeryActivityStore {
       runs: this.runs().map((r) => structuredClone(r)),
       agents: this.agents().map((a) => ({ ...a })),
       activeRunId: this.activeRunId(),
+      outcomes: Object.fromEntries(this.#outcomes),
     };
     this.#frozenView = [snapshot];
     this.#frozenRevision = this.#revision;
@@ -684,6 +685,7 @@ export class ForgeryActivityStore {
     this.#agents.clear();
     this.#subgoals.clear();
     this.#subgoalOrder = [];
+    this.#outcomes.clear();
     this.#frozenView = [];
     this.#frozenRevision = -1;
 
@@ -697,6 +699,12 @@ export class ForgeryActivityStore {
     }
     for (const agent of snap.agents) {
       this.#agents.set(agent.id, agent);
+    }
+    // Restore model routing outcomes (goal 26 data) so they survive restart.
+    if (snap.outcomes) {
+      for (const [key, value] of Object.entries(snap.outcomes)) {
+        this.#outcomes.set(key, { ...value });
+      }
     }
     this.#notify();
   }
@@ -716,6 +724,7 @@ export class ForgeryActivityStore {
     this.#agents.clear();
     this.#subgoals.clear();
     this.#subgoalOrder = [];
+    this.#outcomes.clear();
     this.#frozenView = [];
     this.#frozenRevision = -1;
     this.#notify();
