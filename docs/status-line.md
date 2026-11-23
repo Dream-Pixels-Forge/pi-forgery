@@ -6,24 +6,32 @@ permalink: /status-line.html
 
 # Status line / footer
 
-When a run is active the footer shows:
+Active and most-recent completed/failed runs show call count, tokens, cost,
+duration, and subgoal progress when available. For example, the compact status
+for a finished run is:
 
 ```
-⎇ main · ctx 42% · 21.3k/32.0k tok · claude-sonnet (med) · ◐ demo · 12 calls · 1.2k tok · $0.42 · 3m12s
+✓ demo completed · 2 calls · 1.2k tok · $0.42 · 3m12s · subgoals 1/2
 ```
 
-Every value comes from the live activity store or the host context — no
-fabricated telemetry.
+Call labels use `1 call` / `N calls`. Active durations keep ticking; finished
+runs freeze at `finishedAt - startedAt`. Zero cost and missing values are
+omitted, and subgoals appear only when the run has them. Every value comes from
+the live activity store or the host context — no fabricated telemetry.
 
 ## Two surfaces
 
 1. **Custom footer component** (`ctx.ui.setFooter`) — shows git branch, live
    context usage (percent + tokens/limit), model, thinking effort, working
-   directory, and active run status (calls, tokens, cost, duration).
+   directory, and active/recent run telemetry. Its run segment keeps the
+   animated status glyph, bold run name, and recent status text.
 
 2. **Built-in footer slot** (`ctx.ui.setStatus("forgery", …)`) — when another
    extension reclaims the custom footer slot, the compact status string is
-   mirrored here so Pi's built-in footer still shows live forgery state.
+   mirrored here so Pi's built-in footer still shows the same run telemetry.
+
+Both surfaces use the same status summary and metric formatter, so call,
+token, cost, duration, and subgoal values cannot drift apart.
 
 ## Update cadence
 

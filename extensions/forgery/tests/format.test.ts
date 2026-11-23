@@ -220,8 +220,187 @@ test("formatStatusSummary: active run renders calls, tokens, cost, duration", ()
   const summary = summarizeStatus(snap, () => snap.now + 60_000);
   const out = formatStatusSummary(summary);
   assert.ok(out.includes("demo"), "includes run name");
-  assert.ok(out.includes("1 calls"), "includes calls");
+  assert.ok(out.includes("1 call"), "includes singular call label");
   assert.ok(out.includes("1.2k tok"), "includes tokens");
   assert.ok(out.includes("$0.42"), "includes cost");
   assert.ok(out.includes("1m"), "includes duration");
+});
+
+function completedRunSnapshot() {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.beginCall("run-1", "c1", "pi.read", { path: "a.ts" });
+  store.finishCall("run-1", "c1", {
+    success: true,
+    metrics: { tokens: 1200, toolCalls: 1, cost: 0.42 },
+  });
+  store.beginCall("run-1", "c2", "pi.read", { path: "b.ts" });
+  store.finishCall("run-1", "c2", {
+    success: true,
+    metrics: { tokens: 34, toolCalls: 1, cost: 0 },
+  });
+  store.subgoal({ goalId: "run-1", name: "tests", status: "completed" });
+  store.subgoal({ goalId: "run-1", name: "docs", status: "running" });
+  store.finish("run-1", true);
+  const snap = store.snapshot();
+  snap.runs[0].startedAt = 1_000;
+  snap.runs[0].finishedAt = 193_000;
+  return snap;
+}
+
+test("summarizeStatus: recent run aggregates metrics, wall duration, and subgoals", () => {
+  const snap = completedRunSnapshot();
+  const summary = summarizeStatus(snap, () => 999_000);
+  assert.equal(summary.active, false);
+  assert.equal(summary.calls, 2);
+  assert.equal(summary.tokens, 1234);
+  assert.equal(summary.cost, 0.42);
+  assert.equal(summary.elapsed, 192_000);
+  assert.deepEqual(summary.subgoal, { completed: 1, total: 2 });
+});
+
+test("formatStatusSummary: recent run renders metrics, wall duration, and subgoals", () => {
+  const summary = summarizeStatus(completedRunSnapshot(), () => 999_000);
+  assert.equal(
+    formatStatusSummary(summary),
+    "✓ demo completed · 2 calls · 1.2k tok · $0.42 · 3m12s · subgoals 1/2",
+  );
+});
+
+test("formatStatusSummary: recent run falls back to call metrics", () => {
+  const snap = completedRunSnapshot();
+  snap.runs[0].metrics = undefined;
+  const summary = summarizeStatus(snap, () => 999_000);
+  assert.equal(summary.tokens, 1234);
+  assert.equal(summary.cost, 0.42);
+});
+
+test("formatStatusSummary: call count uses singular and plural labels", () => {
+  const summary = {
+    active: true,
+    glyph: "⠋",
+    label: "demo",
+    calls: 1,
+    tokens: undefined,
+    cost: undefined,
+    elapsed: undefined,
+    status: "running",
+  };
+  assert.equal(formatStatusSummary(summary), "⠋ demo · 1 call");
+  assert.equal(formatStatusSummary({ ...summary, calls: 2 }), "⠋ demo · 2 calls");
+});
+
+test("formatStatusSummary: zero cost is omitted", () => {
+  const out = formatStatusSummary({
+    active: true,
+    glyph: "⠋",
+    label: "demo",
+    calls: 0,
+    tokens: 0,
+    cost: 0,
+    elapsed: undefined,
+    status: "running",
+  });
+  assert.equal(out, "⠋ demo · 0 calls · 0 tok");
+  assert.ok(!out.includes("—"), "zero cost must not render an em-dash segment");
+});
+
+test("summarizeStatus: active run uses direct run metrics when calls have none", () => {
+  const store = new ForgeryActivityStore();
+  const run = store.start("run-1", { name: "direct" });
+  run.metrics = { toolCalls: 1, tokens: 4567, cost: 1.25 };
+  const snap = store.snapshot();
+  const summary = summarizeStatus(snap, () => snap.now + 5_000);
+  assert.equal(summary.calls, 0);
+  assert.equal(summary.tokens, 4567);
+  assert.equal(summary.cost, 1.25);
+});
+
+test("summarizeStatus: zero run totals fall back to updateCall metrics", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.beginCall("run-1", "c1", "agents.run", { task: "test" });
+  store.updateCall("run-1", "c1", {
+    type: "metrics",
+    metrics: { tokens: 1234, toolCalls: 1, cost: 0.42 },
+  });
+  store.finishCall("run-1", "c1", { success: true });
+  store.finish("run-1", true);
+  const summary = summarizeStatus(store.snapshot(), () => 999_000);
+  assert.equal(summary.calls, 1);
+  assert.equal(summary.tokens, 1234);
+  assert.equal(summary.cost, 0.42);
+});
+
+test("summarizeStatus: selected active run does not mix other active runs", () => {
+  const store = new ForgeryActivityStore();
+  const first = store.start("run-1", { name: "first" });
+  first.startedAt = 1_000;
+  store.beginCall("run-1", "c1", "pi.read", { path: "a.ts" });
+  store.finishCall("run-1", "c1", {
+    success: true,
+    metrics: { tokens: 100, toolCalls: 1, cost: 0.1 },
+  });
+  store.subgoal({ goalId: "run-1", name: "first goal", status: "completed" });
+
+  const second = store.start("run-2", { name: "second" });
+  second.startedAt = 5_000;
+  store.beginCall("run-2", "c2", "pi.read", { path: "b.ts" });
+  store.finishCall("run-2", "c2", {
+    success: true,
+    metrics: { tokens: 200, toolCalls: 1, cost: 0.2 },
+  });
+  store.beginCall("run-2", "c3", "pi.read", { path: "c.ts" });
+  store.finishCall("run-2", "c3", { success: true });
+  store.subgoal({ goalId: "run-2", name: "second done", status: "completed" });
+  store.subgoal({ goalId: "run-2", name: "second running", status: "running" });
+
+  const summary = summarizeStatus(store.snapshot(), () => 10_000);
+  assert.deepEqual(
+    {
+      label: summary.label,
+      calls: summary.calls,
+      tokens: summary.tokens,
+      cost: summary.cost,
+      elapsed: summary.elapsed,
+      subgoal: summary.subgoal,
+    },
+    {
+      label: "second",
+      calls: 2,
+      tokens: 200,
+      cost: 0.2,
+      elapsed: 5_000,
+      subgoal: { completed: 1, total: 2 },
+    },
+  );
+});
+
+test("summarizeStatus: mixed finish and update metrics stay canonical for active and recent runs", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.beginCall("run-1", "c1", "agents.run", { task: "first" });
+  store.finishCall("run-1", "c1", {
+    success: true,
+    metrics: { tokens: 100, toolCalls: 1, cost: 0.1 },
+  });
+  store.beginCall("run-1", "c2", "agents.run", { task: "second" });
+  store.updateCall("run-1", "c2", {
+    type: "metrics",
+    metrics: { tokens: 200, toolCalls: 1, cost: 0.2 },
+  });
+
+  const active = summarizeStatus(store.snapshot(), () => 10_000);
+  store.finishCall("run-1", "c2", { success: true });
+  store.finish("run-1", true);
+  const recent = summarizeStatus(store.snapshot(), () => 20_000);
+  const telemetry = [active, recent].map((summary) => ({
+    tokens: summary.tokens,
+    cost: Number(summary.cost?.toFixed(2)),
+    formattedCost: formatStatusSummary(summary).includes("$0.30"),
+  }));
+  assert.deepEqual(telemetry, [
+    { tokens: 300, cost: 0.3, formattedCost: true },
+    { tokens: 300, cost: 0.3, formattedCost: true },
+  ]);
 });

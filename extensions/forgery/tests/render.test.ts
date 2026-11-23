@@ -4,6 +4,7 @@
  * produce the expected line shapes.
  */
 
+import { homedir } from "node:os";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ForgeryFooter, type ForgeryFooterContext } from "../src/ui/footer.js";
@@ -52,6 +53,29 @@ test("ForgeryFooter: renders idle when no runs", () => {
   assert.match(cleanWidth(lines[0]), /21\.3k\/32k/);
 });
 
+test("ForgeryFooter: shows working directory ($HOME shortened to ~)", () => {
+  const store = new ForgeryActivityStore();
+  const home = homedir();
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => null,
+    modelId: () => undefined,
+    effort: () => null,
+    ciStatus: () => null,
+    cwd: () => home,
+  };
+  const footer = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), footerCtx);
+  assert.match(cleanWidth(footer.render(120)[0]), /~/, "home dir renders as ~");
+
+  const nestedCtx = { ...footerCtx, cwd: () => `${home}/src/ui/footer.ts` };
+  const nestedFooter = new ForgeryFooter(() => stubTheme(), () => store.snapshot(), nestedCtx);
+  assert.match(
+    cleanWidth(nestedFooter.render(120)[0]),
+    /~\/src\/ui\/footer\.ts/,
+    "nested path renders under ~",
+  );
+});
+
 test("ForgeryFooter: renders active run metrics", () => {
   const store = new ForgeryActivityStore();
   const run = store.start("run-1", { name: "demo" });
@@ -72,8 +96,47 @@ test("ForgeryFooter: renders active run metrics", () => {
   const lines = footer.render(200);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /demo/);
-  assert.match(lines[0], /1 calls/);
+  assert.match(lines[0], /1 call\b/);
   void run;
+});
+
+test("ForgeryFooter: completed run telemetry matches statusString", () => {
+  const store = new ForgeryActivityStore();
+  store.start("run-1", { name: "demo" });
+  store.beginCall("run-1", "c1", "pi.read", { path: "a.ts" });
+  store.finishCall("run-1", "c1", {
+    success: true,
+    metrics: { tokens: 1234, toolCalls: 1, cost: 0.42 },
+  });
+  store.subgoal({ goalId: "run-1", name: "tests", status: "completed" });
+  store.subgoal({ goalId: "run-1", name: "docs", status: "running" });
+  store.finish("run-1", true);
+  const snap = store.snapshot();
+  snap.runs[0].startedAt = 1_000;
+  snap.runs[0].finishedAt = 193_000;
+
+  const footerCtx: ForgeryFooterContext = {
+    gitBranch: () => null,
+    contextUsage: () => null,
+    modelId: () => undefined,
+    effort: () => null,
+    ciStatus: () => null,
+  };
+  const footer = new ForgeryFooter(
+    () => stubTheme(),
+    () => snap,
+    footerCtx,
+    false,
+    () => 999_000,
+  );
+  const status = cleanWidth(footer.statusString());
+  const custom = cleanWidth(footer.render(300).join(" "));
+  for (const telemetry of ["1 call", "1.2k tok", "$0.42", "3m12s", "subgoals 1/2"]) {
+    assert.ok(status.includes(telemetry), `statusString missing ${telemetry}: ${status}`);
+    assert.ok(custom.includes(telemetry), `custom footer missing ${telemetry}: ${custom}`);
+  }
+  assert.ok(status.includes("completed"));
+  assert.ok(custom.includes("completed"));
 });
 
 test("ForgeryFooter: statusString() mirrors a compact line", () => {

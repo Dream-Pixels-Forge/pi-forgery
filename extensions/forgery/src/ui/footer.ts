@@ -22,12 +22,13 @@ import type { UiStatus } from "./format";
 import {
   effortMeter,
   fit,
-  formatDuration,
   formatPercent,
   formatTokens,
+  formatStatusMetrics,
   formatStatusSummary,
   progressBar,
   renderStatus,
+  shortenCwd,
   shortModel,
   statusGlyph,
   summarizeStatus,
@@ -50,6 +51,8 @@ export interface ForgeryFooterContext {
   ciStatus: () => string | null;
   /** Budget status for the active run: { pctUsed, overSoft, overHard }. */
   budgetStatus: () => { pctUsed: number; overSoft: boolean; overHard: boolean } | null;
+  /** Working directory of the current session, or undefined when unknown. */
+  cwd: () => string | undefined;
 }
 
 /** A footer segment: a piece of the status line with a priority and min width. */
@@ -158,6 +161,18 @@ export class ForgeryFooter implements Component {
       },
     });
 
+    segs.push({
+      id: "cwd",
+      priority: 3,
+      align: "left",
+      minWidth: 8,
+      render: () => {
+        const dir = this.#readCwd();
+        if (!dir) return undefined;
+        return theme.fg("muted", shortenCwd(dir));
+      },
+    });
+
     // ── Right group: activity ────────────────────────────────────────
 
     segs.push({
@@ -237,7 +252,8 @@ export class ForgeryFooter implements Component {
       },
     });
 
-    // Active run / recent run segment.
+    // Active run / recent run segment: `◐ demo · 12 calls · 1.2k tok · $0.42 · 3m12s`.
+    // Duration shows elapsed time for an active run, wall time for a finished one.
     segs.push({
       id: "run",
       priority: active ? 1 : recent ? 2 : 4,
@@ -249,10 +265,12 @@ export class ForgeryFooter implements Component {
         const glyph = active
           ? renderStatus(theme, "running", Math.floor(this.clock() / 80) % 10, this.#animations)
           : colorStatusForSnapshot(target.status, theme);
-        const calls = target.metrics?.toolCalls !== undefined ? ` ${target.metrics.toolCalls} calls` : "";
-        const dur = active ? ` · ${formatDuration(snap.now - target.startedAt)}` : "";
+        const metrics = formatStatusMetrics(summarizeStatus(snap, this.clock));
         const statusText = active ? "" : ` ${target.status}`;
-        return theme.fg("text", `${glyph} ${theme.bold(target.name)}${calls}${dur}${statusText}`);
+        return theme.fg(
+          "text",
+          `${glyph} ${theme.bold(target.name)}${metrics ? ` · ${metrics}` : ""}${statusText}`,
+        );
       },
     });
 
@@ -373,6 +391,15 @@ export class ForgeryFooter implements Component {
       return this.footerCtx.gitBranch();
     } catch {
       return null;
+    }
+  }
+
+  /** Read live working directory, degrading on invalid context. */
+  #readCwd(): string | undefined {
+    try {
+      return this.footerCtx.cwd();
+    } catch {
+      return undefined;
     }
   }
 }

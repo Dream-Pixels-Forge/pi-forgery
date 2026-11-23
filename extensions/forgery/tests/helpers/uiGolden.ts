@@ -69,6 +69,7 @@ export function scenario(snapName: string): { snap: ForgerySnapshot; ctx: Forger
     modelId: () => "anthropic/claude-opus-5-5-20261001",
     effort: () => "medium",
     ciStatus: () => null,
+    cwd: () => undefined,
   };
   const now = NOW;
 

@@ -9,7 +9,6 @@ import type {
   ForgeryRun,
   ForgeryRunDisplay,
   ForgerySnapshot,
-  ForgeryActivityMetrics,
   ForgerySubgoal,
   ForgerySubgoalInput,
 } from "./types";
@@ -23,6 +22,29 @@ const MAX_SUBGOALS_PER_RUN = 200;
 
 const now = () => Date.now();
 const genId = () => randomUUID();
+
+/** Apply only the change since the call's previous metrics to the run totals. */
+function applyCallMetrics(
+  run: ForgeryRun,
+  call: ForgeryCall,
+  metrics: ForgeryCall["metrics"],
+): void {
+  const previous = call.metrics;
+  if (metrics === undefined) return;
+  if (!run.metrics) {
+    run.metrics = { toolCalls: 0, tokens: 0, cost: 0 };
+    for (const existingCall of run.calls) {
+      run.metrics.toolCalls += existingCall.metrics?.toolCalls ?? 0;
+      run.metrics.tokens += existingCall.metrics?.tokens ?? 0;
+      run.metrics.cost += existingCall.metrics?.cost ?? 0;
+    }
+  }
+  const totals = run.metrics;
+  totals.toolCalls += (metrics.toolCalls ?? 0) - (previous?.toolCalls ?? 0);
+  totals.tokens += (metrics.tokens ?? 0) - (previous?.tokens ?? 0);
+  totals.cost += (metrics.cost ?? 0) - (previous?.cost ?? 0);
+  call.metrics = metrics;
+}
 
 /**
  * In-memory, revision-subscribable activity store.
@@ -382,7 +404,7 @@ export class ForgeryActivityStore {
         call.progress = update.entityId;
         break;
       case "metrics":
-        call.metrics = update.metrics;
+        applyCallMetrics(run, call, update.metrics);
         break;
       case "preview":
         call.preview = update.preview;
@@ -418,16 +440,7 @@ export class ForgeryActivityStore {
     if (result.preview !== undefined) call.preview = result.preview;
     if (result.error !== undefined) call.error = result.error;
     if (result.metrics !== undefined) {
-      call.metrics = result.metrics;
-      // Accumulate metrics into the run's totals.
-      if (!run.metrics) {
-        run.metrics = { toolCalls: 0, tokens: 0, cost: 0 };
-      }
-      // At this point, run.metrics is definitely defined
-      const metrics = run.metrics as Required<ForgeryActivityMetrics>;
-      metrics.toolCalls += result.metrics.toolCalls ?? 0;
-      metrics.tokens += result.metrics.tokens ?? 0;
-      metrics.cost += result.metrics.cost ?? 0;
+      applyCallMetrics(run, call, result.metrics);
     }
     if (call.detail === undefined && result.preview !== undefined) {
       call.detail = result.preview;
