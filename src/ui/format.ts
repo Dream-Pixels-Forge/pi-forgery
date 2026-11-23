@@ -275,6 +275,33 @@ export function formatToolBreadcrumbs(
   return fit(parts[parts.length - 1], maxWidth);
 }
 
+
+/**
+ * Render a visual timeline / Gantt bar representing an agent's execution interval
+ * within a total run span (runStart -> runEnd).
+ */
+export function formatTimelineBar(
+  agentStart: number,
+  agentEnd: number,
+  runStart: number,
+  runEnd: number,
+  cells: number = 24,
+): string {
+  if (cells <= 0) return "";
+  const span = Math.max(1, runEnd - runStart);
+  const relStart = Math.max(0, Math.min(1, (agentStart - runStart) / span));
+  const relEnd = Math.max(relStart, Math.min(1, (agentEnd - runStart) / span));
+
+  const startIdx = Math.floor(relStart * cells);
+  const endIdx = Math.max(startIdx + 1, Math.min(cells, Math.ceil(relEnd * cells)));
+
+  const before = "░".repeat(Math.min(cells, startIdx));
+  const active = "█".repeat(Math.max(0, Math.min(cells - startIdx, endIdx - startIdx)));
+  const after = "░".repeat(Math.max(0, cells - (before.length + active.length)));
+
+  return `[${before}${active}${after}]`;
+}
+
 export function agentRowCols(
   theme: Theme,
   agent: ForgeryAgentRecord,
