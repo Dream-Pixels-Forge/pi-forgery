@@ -7,10 +7,11 @@ permalink: /development.html
 # Development
 
 ```sh
-cd extensions/forgery
-npm install              # installs tsx + @types/node; links host types
-npm run typecheck        # npx tsc --noEmit
-npm test                 # npx tsx --test tests/*.test.ts
+cd /absolute/path/to/pi-forgery
+pnpm install
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 Typecheck and tests run against the sibling Pi host's `@earendil-works/*`

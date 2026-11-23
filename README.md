@@ -29,12 +29,12 @@ pi-forgery gives Pi **one programmable execution tool** (`forgery_exec`), **one-
 
 ## 📦 Install
 
-Add to your Pi project's `package.json`:
+The repository-root `package.json` declares the extension entry:
 
 ```json
 {
   "pi": {
-    "extensions": ["./extensions/forgery/index.ts"]
+    "extensions": ["./index.ts"]
   }
 }
 ```
@@ -48,7 +48,7 @@ pi install /absolute/path/to/pi-forgery
 For a one-off development run without installing:
 
 ```sh
-pi -e /absolute/path/to/pi-forgery
+pi -e /absolute/path/to/pi-forgery/index.ts
 ```
 
 ---
@@ -136,19 +136,19 @@ Full documentation lives in [`docs/`](./docs/) and is published to [GitHub Pages
 ## 🛠️ Development
 
 ```sh
-cd extensions/forgery
-npm install          # installs tsx + @types/node; links host types
-npm run typecheck    # npx tsc --noEmit
-npm test             # npx tsx --test tests/*.test.ts (252 tests)
-npm run build        # npx tsc
+cd /absolute/path/to/pi-forgery
+pnpm install
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 Quality gates:
 
 ```sh
-npm run --silent typecheck   # exit 0
-npm test                     # all pass, 0 fail
-npm run build                # clean dist/
+pnpm run --silent typecheck   # exit 0
+pnpm test                     # all pass, 0 fail
+pnpm run build                # emits dist/
 ```
 
 ---

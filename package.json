@@ -3,12 +3,12 @@
   "version": "0.4.0",
   "description": "Improved pi-fabric reimplementation for Pi: one programmable forgery_exec tool, one-shot agents, a live activity widget, a status-line footer, and a /forgery dashboard.",
   "type": "module",
-  "main": "extensions/forgery/index.ts",
+  "main": "index.ts",
   "scripts": {
-    "typecheck": "cd extensions/forgery && npx tsc --noEmit",
+    "typecheck": "npx tsc --noEmit",
     "lint": "pnpm run typecheck",
-    "build": "cd extensions/forgery && npx tsc",
-    "test": "cd extensions/forgery && npx tsx --test tests/*.test.ts",
+    "build": "npx tsc",
+    "test": "npx tsx --test tests/*.test.ts",
     "release:patch": "npm version patch && git push origin main && git push origin --tags",
     "release:minor": "npm version minor && git push origin main && git push origin --tags",
     "release:major": "npm version major && git push origin main && git push origin --tags"
@@ -27,9 +27,19 @@
   "license": "MIT",
   "pi": {
     "extensions": [
-      "./extensions/forgery/index.ts"
+      "./index.ts"
     ]
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
 }

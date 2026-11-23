@@ -425,12 +425,12 @@ code.cmd { background: #14161a; padding: 0.1em 0.35em; border-radius: 4px; }
     <div class="features-grid" style="margin-top:2rem;">
       <div class="feature-card reveal">
         <h3>Install</h3>
-        <p>The entry is <code>extensions/forgery/index.ts</code>, declared in <code>package.json</code> → <code>pi.extensions</code>. Pi's loader transpiles TS directly — no build step required.</p>
+        <p>The entry is <code>index.ts</code> at the repository root, declared in <code>package.json</code> → <code>pi.extensions</code>. Pi's loader transpiles TS directly — no build step required.</p>
       </div>
       <div class="feature-card reveal">
         <h3>Develop</h3>
         <p>Typecheck and tests run against the sibling Pi host's <code>@earendil-works/*</code> type declarations. No network, no native dependencies.</p>
-        <code>npm run typecheck<br>npm test</code>
+        <code>pnpm run typecheck<br>pnpm test</code>
       </div>
     </div>
 
