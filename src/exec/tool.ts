@@ -1435,7 +1435,7 @@ const PARAMS = Type.Object({
   runId: Type.Optional(Type.String({ description: "Run id to reuse for a resumed/continued run. Generated when omitted." })),
   /** When true, validates every host call's args against its schema and reports
    *  the planned call sequence without executing any host call. */
-  dryRun: Type.Optional(Type.Boolean({ description: "Validate calls without executing (dry-run / pre-flight check)." })),
+  dryRun: Type.Optional(Type.Boolean({ description: "Execute program code but skip registered host calls. Not a sandbox: Node globals and dynamic imports remain available." })),
 });
 
 export function createForgeryExecTool(

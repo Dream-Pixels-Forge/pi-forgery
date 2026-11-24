@@ -65,9 +65,9 @@
   - `buildHostProxy(pi, ctx, runtime, activity)` — returns a Proxy whose
     allowed members (`read/bash/edit/write/find/grep/ls/agents/exec`) are
     callable; unknown members throw `NoHostError`.
-- **Security:** program body is `new Function("pi","__host","__activity",
-  code)`; `pi` is a read-only Proxy whitelist, not a god object. No `eval`,
-  no `process`, no `import`.
+- **Security:** program bodies are trusted code executed via `new Function`
+  with normal Node.js permissions. The host proxy validates only calls made
+  through it; Node globals and dynamic imports remain available.
 - **Tests:** runtime.test.ts (validation, parallel calls, error bridging).
 
 ### `agents/runner.ts`
@@ -128,8 +128,9 @@
 | timeoutMs | number? | no | program-level deadline |
 | runId | string? | no | id to reuse for a resumed run |
 
-## Security (non-goals enforced)
-- No arbitrary filesystem in the program body: host proxy whitelist only.
+## Security boundary
+- Program code is trusted. Dry-run executes program control flow and only
+  skips registered host calls; it is not an isolation mechanism.
 - Child agents spawn a real Pi process; that process runs with the user's
   normal tool permissions — no elevated scope.
 - No secrets are logged; agent `stderr` is truncated and sanitized.

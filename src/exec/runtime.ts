@@ -11,9 +11,9 @@
  *      show live progress.
  *   3. Runs independent calls in parallel via Promise.all.
  *
- * Security posture: the program body is `new Function` with a `pi` host
- * proxy that is a *whitelist* of named, validated call sites — not a god
- * object. No `eval`, no `process`, no arbitrary property access on a host.
+ * Security posture: program bodies are trusted code executed with normal
+ * Node.js permissions. The `pi` proxy validates only calls made through it;
+ * it is not a sandbox or a boundary around Node globals and dynamic imports.
  */
 
 import type { TSchema, Static } from "typebox";
@@ -119,12 +119,12 @@ export function validateArgs(
 }
 
 /**
- * The program body is executed as a `new Function` so that:
- *   - it has access to `pi` (the validated host proxy) and `__host`
- *   - it has NO access to `this`, `arguments`, or any global except
- *     what we explicitly pass (we pass only `pi` and `__host`)
- *   - we can wrap it in a try/catch to capture runtime errors
+ * The program body is executed as a `new Function` to provide top-level
+ * `await`, access to the validated host proxies, and captured runtime errors.
+ * Node globals and dynamic imports remain available to trusted program code.
  */
+const DRY_RUN_WARNING =
+  "Program code executes; only registered host calls are skipped. Node globals and dynamic imports remain available.";
 export interface ProgramResult {
   ok: boolean;
   value?: unknown;
@@ -286,7 +286,7 @@ export async function runProgram(
     }
     // Dry-run: return the planned call sequence instead of the program's value.
     if (ctx.dryRun) {
-      return { ok: true, value: { planned }, planned };
+      return { ok: true, value: { planned, warning: DRY_RUN_WARNING }, planned };
     }
     return { ok: true, value };
   } catch (e) {
@@ -320,14 +320,14 @@ export async function runForgery(
   signal: AbortSignal,
   dryRun = false,
 ): Promise<ForgeryExecOutcome> {
-  // Dry-run: validate all host call args without executing or touching the store.
+  // Dry-run executes program code but suppresses host calls and store writes.
   if (dryRun) {
     const dryCtx: HostExecCtx = { ...ctx, dryRun: true };
     const result = await runProgram(code, registry, dryCtx, signal);
     if (result.ok) {
       const planned = (result.value as { planned?: PlannedCall[] })?.planned ?? [];
       const preview = JSON.stringify(planned, null, 2).slice(0, 400);
-      return { ok: true, value: { planned }, preview };
+      return { ok: true, value: { planned, warning: DRY_RUN_WARNING }, preview };
     }
     return { ok: false, error: result.error ?? "unknown", preview: safeText(result.error ?? "") };
   }
