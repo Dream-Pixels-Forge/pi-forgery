@@ -27,8 +27,8 @@ Issue #19: the runner invokes text-mode `pi --print` but parses incompatible inv
 
 ### Verification Evidence
 - RED: `tsx --test tests/runner.test.ts` → 5 failures covering nested content, usage, JSON mode, missing results, and dropped structured value.
-- GREEN: same command → 5/5 pass.
-- Full suite: `pnpm test` → 282 pass, 0 fail, 0 skipped.
+- GREEN: same command → 5/5 pass; review-driven usage-only/malformed-input case → 6/6 pass.
+- Full suite: `pnpm test` → 283 pass, 0 fail, 0 skipped.
 - Typecheck: `tsc --noEmit` → exit 0.
 - Build: `tsc` → exit 0, 5.17s, max RSS 796,108 KB.
 - Real Pi smoke: `AgentRunner({ piBinary: "pi" })` returned `{ status: "completed", text: "AGENT_SMOKE_OK", usage: { input: 4159, output: 34, cost: 0 } }`.

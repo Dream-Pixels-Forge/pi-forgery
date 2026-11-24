@@ -76,6 +76,13 @@ test("parser retains latest message_update usage and legacy structured value", (
   assert.deepEqual(parsed?.usage, { input: 120, output: 18, cost: 0.3 });
 });
 
+test("parser rejects usage-only output and ignores non-JSON noise", () => {
+  const usageOnly = JSON.stringify({ type: "message_update", usage: usage(), assistantMessageEvent: { type: "text_delta", delta: "partial" } });
+  assert.equal(parsePiPrintJsonl(usageOnly), undefined);
+  assert.doesNotThrow(() => parsePiPrintJsonl("not json\n"));
+  assert.equal(parsePiPrintJsonl("not json\n"), undefined);
+});
+
 test("fake Pi CLI runs in JSON mode and returns final text and usage", async () => {
   const { binary, argsPath } = fakePi("json-success", [
     { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Real answer" }], usage: usage() } },
