@@ -109,6 +109,93 @@ test("exit zero without an assistant result fails instead of returning empty suc
   assert.match(result.error ?? "", /no assistant result/i);
 });
 
+function stubbornPi(name: string): { binary: string; pidPath: string } {
+  const binary = join(TEST_ROOT, `${name}.cjs`);
+  const pidPath = join(TEST_ROOT, `${name}.pid`);
+  const source = `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`;
+  writeFileSync(binary, source);
+  chmodSync(binary, 0o755);
+  return { binary, pidPath };
+}
+
+function cleanupStubborn(pidPath: string): void {
+  try {
+    const pid = Number(readFileSync(pidPath, "utf8"));
+    if (pid > 0) process.kill(pid, "SIGKILL");
+  } catch {
+    // Already exited or PID file not written yet.
+  }
+}
+
+async function within<T>(promise: Promise<T>, ms = 1_000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`operation did not settle within ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+test("timeout escalates beyond SIGTERM and preserves timed_out", async () => {
+  const { binary, pidPath } = stubbornPi("timeout-resistant");
+  const runner = new AgentRunner({ piBinary: binary, maxConcurrent: 1 });
+  const started = Date.now();
+  try {
+    const result = await within(runner.run({ task: "wait", timeoutMs: 50 }));
+    assert.equal(result.status, "timed_out");
+    assert.match(result.error ?? "", /timed out/i);
+    assert.ok(Date.now() - started < 1_000, "timeout must not wait for a cooperative exit");
+  } finally {
+    cleanupStubborn(pidPath);
+  }
+});
+
+test("explicit stop kills the child and preserves stopped on close", async () => {
+  const { binary, pidPath } = stubbornPi("stop-resistant");
+  const runner = new AgentRunner({ piBinary: binary, maxConcurrent: 1 });
+  try {
+    const running = runner.run({ task: "wait", timeoutMs: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const agent = runner.listForUi()[0];
+    assert.ok(agent);
+    assert.equal(runner.stop(agent.id)?.status, "stopped");
+    const result = await within(running);
+    assert.equal(result.status, "stopped");
+  } finally {
+    cleanupStubborn(pidPath);
+  }
+});
+
+test("agents.run abort signal stops the active child", async () => {
+  const { binary, pidPath } = stubbornPi("abort-resistant");
+  const runner = new AgentRunner({ piBinary: binary, maxConcurrent: 1 });
+  const store = new ForgeryActivityStore();
+  store.start("run-abort");
+  const registry = makeRegistry(runner, store, undefined);
+  const spec = registry.get("agents.run")!;
+  const ctx: HostExecCtx = { runId: "run-abort", activity: store, cwd: TEST_ROOT };
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), 20);
+  try {
+    const result = await within(spec.execute({ task: "wait", timeoutMs: 5_000 }, ctx, controller.signal));
+    assert.match(result.error ?? "", /aborted|stopped/i);
+    assert.equal(runner.listForUi()[0]?.status, "stopped");
+  } finally {
+    clearTimeout(abortTimer);
+    cleanupStubborn(pidPath);
+  }
+});
+
 test("agents.run preserves structured value", async () => {
   const baseResult: AgentRunResult = {
     id: "agent-1",

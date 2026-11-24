@@ -433,7 +433,7 @@ export function makeRegistry(
     ref: "agents.run",
     schema: AgentsRun,
     kind: "agent",
-    execute: async (args, hctx, _signal) => {
+    execute: async (args, hctx, signal) => {
       const task = String(args.task ?? "");
       if (!task) return { error: "agents.run: task is required" };
 
@@ -476,7 +476,7 @@ export function makeRegistry(
         systemPrompt: args.systemPrompt ? String(args.systemPrompt) : undefined,
         parentId: hctx.runId,
         runId: hctx.runId,
-      });
+      }, signal);
       const agent = runner.get(result.id);
       if (agent) activity.addAgent(agent);
       const ok = result.status === "completed";
