@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve as pathResolve, dirname as pathDirname } from "node:path";
 import { ForgeryActivityStore } from "./src/activity/store";
+import { distill } from "./src/activity/distill";
 import { AgentRunner } from "./src/agents/runner";
 import { createCostManager, type CostManager } from "./src/agents/cost-manager";
 import { createForgeryExecTool, makeRegistry } from "./src/exec/tool";
@@ -89,7 +90,7 @@ export default function forgery(pi: ExtensionAPI): void {
   pi.registerCommand("forgery", {
     description: "pi-forgery: dashboard, status, agents, log, stop",
     getArgumentCompletions: (prefix: string): { value: string; label: string; description?: string }[] | null => {
-      const subs = ["dashboard", "status", "agents", "log", "stop", "settings", "image-protocol", "export", "import"];
+      const subs = ["dashboard", "status", "agents", "log", "stop", "settings", "image-protocol", "export", "import", "distill"];
       const list: { value: string; label: string; description?: string }[] = subs
         .filter((s) => s.startsWith(prefix.toLowerCase()))
         .map((s) => ({ value: s, label: s, description: subDescriptions[s] }));
@@ -305,6 +306,36 @@ export default function forgery(pi: ExtensionAPI): void {
           }
           break;
         }
+        case "distill": {
+          const minOccurrences = rest[0] ? Number(rest[0]) : undefined;
+          const windowDays = rest[1] ? Number(rest[1]) : undefined;
+          const n = rest[2] ? Number(rest[2]) : undefined;
+
+          const patterns = distill(store, {
+            minOccurrences,
+            windowMs: windowDays !== undefined ? windowDays * 24 * 60 * 60 * 1000 : undefined,
+            n,
+          });
+
+          if (patterns.length === 0) {
+            ctx.ui.notify(
+              "forgery distill: no repeated host-call patterns found (no completed runs or nothing above min-occurrences)",
+              "info",
+            );
+            break;
+          }
+
+          const lines = [
+            `forgery distill: ${patterns.length} pattern(s)`,
+            ...patterns.map((p) => {
+              const avgCost = p.avgCost.toFixed(4);
+              const avgDur = Math.round(p.avgDuration);
+              return `  ${p.occurrences}x ${p.pattern} → ~$${avgCost}, ~${avgDur}ms (suggested: ${p.suggestedName})`;
+            }),
+          ];
+          ctx.ui.notify(lines.join("\n"), "info");
+          break;
+        }
         case "workflow": {
           const [action, ...workflowArgs] = rest;
           const engine = createEngine(store, runner, ctx.cwd);
@@ -475,6 +506,7 @@ const subDescriptions: Record<string, string> = {
   workflow: "EGM-style Goldfish review (run|status|list|stop|resume)",
   export: "export the activity snapshot to a JSON file (export [path])",
   import: "import an activity snapshot from a JSON file (import <path>)",
+  distill: "mine completed runs for repeated host-call patterns (distill [min-occurrences] [window-days] [n])",
 };
 
 async function status(ctx: ExtensionContext): Promise<void> {
