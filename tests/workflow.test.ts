@@ -7,8 +7,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { ForgeryActivityStore } from "../src/activity/store.js";
 import {
   parseFindings,
@@ -19,6 +20,18 @@ import {
 import { BootstrapRunner } from "../src/workflow/bootstrap-runner.js";
 import { WorkflowResolver } from "../src/workflow/resolver.js";
 import type { AgentRunner, AgentRunResult } from "../src/agents/runner.js";
+
+const PROJECT_CWD = process.cwd();
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "forgery-workflow-tests-"));
+for (const fixture of ["docs", "src", "dev-notes"]) {
+  cpSync(join(PROJECT_CWD, fixture), join(TEST_ROOT, fixture), { recursive: true });
+}
+mkdirSync(join(TEST_ROOT, ".pi/forgery/review"), { recursive: true });
+process.chdir(TEST_ROOT);
+test.after(() => {
+  process.chdir(PROJECT_CWD);
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+});
 
 // ── fake AgentRunner (zero subprocesses) ────────────────────────────────
 

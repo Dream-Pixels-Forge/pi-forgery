@@ -6,8 +6,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readdirSync, unlinkSync, readFileSync } from "node:fs";
+import { mkdirSync, readdirSync, unlinkSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { WorkflowJournal } from "../src/workflow/journal.js";
 import { WorkflowChain } from "../src/workflow/chain.js";
 import { WorkflowEngine } from "../src/workflow/engine.js";
@@ -15,7 +16,14 @@ import { ForgeryActivityStore } from "../src/activity/store.js";
 import { AgentRunner } from "../src/agents/runner.js";
 import type { JournalEntry } from "../src/workflow/journal.js";
 
-// Use the default journal dir (same as WorkflowChain).
+// Run against the production-relative layout inside an isolated temp cwd.
+const PROJECT_CWD = process.cwd();
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "forgery-journal-tests-"));
+process.chdir(TEST_ROOT);
+test.after(() => {
+  process.chdir(PROJECT_CWD);
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+});
 const TEST_DIR = ".pi/forgery/journal";
 
 // ── helpers ─────────────────────────────────────────────────────────────
@@ -197,5 +205,3 @@ test("journal: resume — idempotent on completed run", () => {
   assert.equal(r2.status, "already-complete");
   assert.equal(r1.completedSteps.length, r2.completedSteps.length);
 });
-
-cleanup();

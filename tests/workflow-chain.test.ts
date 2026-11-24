@@ -9,11 +9,22 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ForgeryActivityStore } from "../src/activity/store.js";
 import { WorkflowChain } from "../src/workflow/chain.js";
 import { WorkflowEngine } from "../src/workflow/engine.js";
 import type { WorkflowResult } from "../src/workflow/types.js";
 import type { AgentRunner, AgentRunResult } from "../src/agents/runner.js";
+
+const PROJECT_CWD = process.cwd();
+const TEST_ROOT = mkdtempSync(join(tmpdir(), "forgery-chain-tests-"));
+process.chdir(TEST_ROOT);
+test.after(() => {
+  process.chdir(PROJECT_CWD);
+  rmSync(TEST_ROOT, { recursive: true, force: true });
+});
 
 // ── fake AgentRunner (zero subprocesses) ────────────────────────────────
 

@@ -269,7 +269,16 @@ export class WorkflowEngine {
     private readonly store: ForgeryActivityStore,
     private readonly runner: AgentRunner,
     private readonly cwd: string,
+    private readonly paths: { runDir?: string; reportDir?: string } = {},
   ) {}
+
+  private get runDir(): string {
+    return this.paths.runDir ?? WORKFLOW_RUN_DIR;
+  }
+
+  private get reportDir(): string {
+    return this.paths.reportDir ?? WORKFLOW_REPORT_DIR;
+  }
 
   /** List available pipelines. */
   pipelines(): PipelineDef[] {
@@ -567,15 +576,15 @@ export class WorkflowEngine {
 
   #persist(state: WorkflowRunState): void {
     try {
-      mkdirSync(WORKFLOW_RUN_DIR, { recursive: true });
-      writeFileSync(join(WORKFLOW_RUN_DIR, `${state.id}.json`), JSON.stringify(state, null, 2), "utf8");
+      mkdirSync(this.runDir, { recursive: true });
+      writeFileSync(join(this.runDir, `${state.id}.json`), JSON.stringify(state, null, 2), "utf8");
     } catch {
       /* persistence is best-effort; in-memory state is authoritative */
     }
   }
 
   #writeArtifact(runId: string, fileName: string, content: string): string {
-    const dir = join(WORKFLOW_REPORT_DIR, runId);
+    const dir = join(this.reportDir, runId);
     mkdirSync(dir, { recursive: true });
     const path = join(dir, fileName);
     writeFileSync(path, content, "utf8");
@@ -623,7 +632,7 @@ export class WorkflowEngine {
     if (sorted.length === 0) lines.push("_No findings._");
     const content = lines.join("\n");
     this.#writeArtifact(runId, "consolidated_review_report.md", content);
-    return join(WORKFLOW_REPORT_DIR, runId, "consolidated_review_report.md");
+    return join(this.reportDir, runId, "consolidated_review_report.md");
   }
 
   #formatPhaseReport(report: SynthesizedReport, standardText: string): string {
