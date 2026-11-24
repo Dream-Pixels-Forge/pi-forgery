@@ -1,5 +1,11 @@
 # DECISIONS.md — pi-forgery
 
+## 2026-11-24: PR #20 parser review findings dismissed by executable evidence
+- **Conflict:** Independent review requested changes for a possible `lastText.trim()` undefined dereference and usage-only false success.
+- **Evidence:** `lastText` is initialized to `""`; the final parser guard returns `undefined` for empty text/value regardless of usage. Added passing tests for usage-only events and malformed non-JSON input; the existing fake-CLI no-result test also passes.
+- **Decision:** Both findings were misreads. The original reviewer resumed, stated “Neither finding survives,” and returned `APPROVED`.
+- **Decided by:** original independent reviewer + orchestrator regression evidence.
+
 ## 2026-11-24: PR #18 test cwd isolation is process-safe
 - **Conflict:** An independent reviewer flagged module-level `process.chdir(TEST_ROOT)` as a possible cross-file race in workflow tests.
 - **Evidence:** Node.js documents process isolation as the default: each test file executes in its own child process, including concurrent test runs. Each affected file also restores its original cwd in `test.after`; the full suite and real-state sentinel check pass.
