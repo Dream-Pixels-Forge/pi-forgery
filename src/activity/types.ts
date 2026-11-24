@@ -161,6 +161,14 @@ export interface ForgeryAgentRecord {
   parentId?: string;
   /** Run id this agent belongs to, so agents can be grouped per run. */
   runId?: string;
+  /** Original run parameters, stored so the agent can be retried (SG-29). */
+  cwd?: string;
+  /** Original model override, if any. */
+  model?: string;
+  /** Original system prompt, if any. */
+  systemPrompt?: string;
+  /** Original soft timeout in ms, if any. */
+  timeoutMs?: number;
   /** Short headline of the agent's current tool or terminal result. */
   current?: string;
   /** Recent tool call breadcrumbs: last 3-5 sub-tool actions. */

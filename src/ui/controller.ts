@@ -266,6 +266,7 @@ export class ForgeryUiController {
             maxConcurrent: this.runner.concurrency,
             piBinary: this.runner.piBinary,
           },
+          runner: this.runner,
         });
         tui.showOverlay(dash, {
           width: "94%",

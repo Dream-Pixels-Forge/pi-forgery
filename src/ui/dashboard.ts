@@ -10,6 +10,7 @@
  */
 
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
+import type { AgentRunner } from "../agents/runner.js";
 import type {
   Component,
   Focusable,
@@ -57,6 +58,8 @@ export interface ForgeryDashboardOptions {
   hostCalls: string[];
   /** Agent runner config (settings view). */
   agentConfig: { maxConcurrent: number; piBinary: string };
+  /** Agent runner, for lifecycle operations (stop/retry). */
+  runner: AgentRunner;
   /** Available terminal rows (used for height-aware layout). */
   rows?: number;
 }
@@ -90,6 +93,10 @@ export class ForgeryDashboard implements Component, Focusable {
   private relativeTime = false;
   /** Scroll offset within the events timeline. */
   private eventScrollOffset = 0;
+  /** Whether the user is typing a live filter string (`/` entered filter mode). */
+  private filtering = false;
+  /** Live filter text — agents whose name/task/status contain it (case-insensitive). */
+  private filterText = "";
   private opts: ForgeryDashboardOptions;
 
   /** Declarative keymap — drives both handling and the help bar so they can't drift. */
@@ -104,6 +111,9 @@ export class ForgeryDashboard implements Component, Focusable {
     { keys: ["down", "j"], label: "select down", run: (d) => d.move(1) },
     { keys: ["tab"], label: "filter", run: (d) => d.cycleFilter() },
     { keys: ["enter"], label: "details", run: (d) => d.toggleDetails() },
+    { keys: ["s"], label: "stop agent", run: (d) => d.stopFocusedAgent() },
+    { keys: ["r"], label: "retry agent", run: (d) => d.retryFocusedAgent() },
+    { keys: ["/"], label: "filter agents", run: (d) => (d.startFiltering()) },
     { keys: ["?"], label: "help", run: (d) => (d.helpOpen = !d.helpOpen) },
     { keys: ["escape", "q"], label: "close", run: (d) => d.closeOrBack() },
     { keys: ["1"], label: "activity", run: (d) => (d.view = "activity") },
@@ -173,6 +183,33 @@ export class ForgeryDashboard implements Component, Focusable {
         return;
       }
     }
+    // ── live agent text filter (SG-29) ─────────────────────────────
+    if (this.filtering) {
+      if (matchesKey(data, 'escape')) {
+        this.filtering = false;
+        this.filterText = "";
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, 'backspace') || matchesKey(data, 'delete')) {
+        this.filterText = this.filterText.slice(0, -1);
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, 'enter')) {
+        this.filtering = false;
+        this.tui.requestRender();
+        return;
+      }
+      if (data.length === 1 && data >= " " && data <= "~") {
+        this.filterText += data;
+        this.tui.requestRender();
+        return;
+      }
+      // Ignore any other key while filtering.
+      this.tui.requestRender();
+      return;
+    }
     const binding = ForgeryDashboard.KEYS.find((b) =>
       b.keys.some((k) => matchesKey(data, k)),
     );
@@ -200,11 +237,11 @@ export class ForgeryDashboard implements Component, Focusable {
 
   /** Move the entity selection up/down, clamped to the filtered list. */
   move(delta: number): void {
-    const entities = this.#filteredAgents(this.opts.snapshot().agents, this.filter);
+    const entities = this.#filteredAgents(this.opts.snapshot().agents, this.filter, this.filterText);
     this.entityIndex = Math.max(0, Math.min(entities.length - 1, this.entityIndex + delta));
   }
 
-  /** Cycle the status filter, resetting the entity selection. */
+  /** Cycle the status filter, resetting the entity selection and clearing text filter. */
   cycleFilter(): void {
     const order: Array<"all" | "active" | "completed" | "failed"> = [
       "all",
@@ -214,7 +251,40 @@ export class ForgeryDashboard implements Component, Focusable {
     ];
     const i = order.indexOf(this.filter);
     this.filter = order[(i + 1) % order.length];
+    this.filterText = "";
+    this.filtering = false;
     this.entityIndex = 0;
+  }
+
+  /** Start live text-filter mode (SG-29: `/` key). Clears any current text. */
+  startFiltering(): void {
+    this.filtering = true;
+    this.filterText = "";
+  }
+
+  /** Stop the currently focused agent (SG-29: `s` key). */
+  stopFocusedAgent(): void {
+    const agents = this.#filteredAgents(
+      this.opts.snapshot().agents,
+      this.filter,
+      this.filterText,
+    );
+    const agent = agents[this.entityIndex];
+    if (!agent) return;
+    this.opts.runner.stop(agent.id);
+  }
+
+  /** Retry the currently focused agent (SG-29: `r` key). Only failed/stopped/
+   *  timed_out/unavailable agents can be retried. */
+  async retryFocusedAgent(): Promise<void> {
+    const agents = this.#filteredAgents(
+      this.opts.snapshot().agents,
+      this.filter,
+      this.filterText,
+    );
+    const agent = agents[this.entityIndex];
+    if (!agent) return;
+    await this.opts.runner.retry(agent.id);
   }
 
   /** Toggle details/inspection drawer for the focused agent entity. */
@@ -333,7 +403,13 @@ export class ForgeryDashboard implements Component, Focusable {
 
     // Body: agents then subgoals, stacked.
     const frame = Math.floor(snap.now / 80) % 10;
-    const agents = snap.agents.filter((a) => a.runId === focus.id);
+    const agents = this.#filteredAgents(
+      snap.agents.filter((a) => a.runId === focus.id),
+      this.filter,
+      this.filterText,
+    );
+    // Clamp entity selection to the filtered list.
+    this.entityIndex = Math.max(0, Math.min(agents.length - 1, this.entityIndex));
     const subgoals = focus.subgoals ?? [];
 
     const agentLines = this.#renderAgentLines(
@@ -805,18 +881,39 @@ export class ForgeryDashboard implements Component, Focusable {
     return this.#pad(lines, width, 24);
   }
 
-  #filteredAgents(agents: ForgeryAgentRecord[], filter: "all" | "active" | "completed" | "failed"): ForgeryAgentRecord[] {
-    if (filter === "all") return agents;
-    switch (filter) {
-      case "active":
-        return agents.filter((a) => a.status === "running" || a.status === "queued");
-      case "completed":
-        return agents.filter((a) => a.status === "completed");
-      case "failed":
-        return agents.filter((a) => a.status === "failed" || a.status === "stopped" || a.status === "timed_out");
-      default:
-        return agents;
+  #filteredAgents(
+    agents: ForgeryAgentRecord[],
+    filter: "all" | "active" | "completed" | "failed",
+    text = "",
+  ): ForgeryAgentRecord[] {
+    let result = agents;
+    if (filter !== "all") {
+      switch (filter) {
+        case "active":
+          result = result.filter((a) => a.status === "running" || a.status === "queued");
+          break;
+        case "completed":
+          result = result.filter((a) => a.status === "completed");
+          break;
+        case "failed":
+          result = result.filter(
+            (a) => a.status === "failed" || a.status === "stopped" || a.status === "timed_out",
+          );
+          break;
+        default:
+          break;
+      }
     }
+    if (text) {
+      const t = text.toLowerCase();
+      result = result.filter(
+        (a) =>
+          a.name.toLowerCase().includes(t) ||
+          a.task.toLowerCase().includes(t) ||
+          a.status.toLowerCase().includes(t),
+      );
+    }
+    return result;
   }
 
   /** Build a depth-first agent tree from a flat list, using parentId for nesting. */

@@ -95,6 +95,10 @@ export class AgentRunner {
       updatedAt: startedAt,
       parentId: req.parentId,
       runId: req.runId,
+      cwd: req.cwd,
+      model: req.model,
+      systemPrompt: req.systemPrompt,
+      timeoutMs: req.timeoutMs,
     };
     this.agents.set(id, agent);
     this.notify();
@@ -169,6 +173,31 @@ export class AgentRunner {
       };
     }
     return undefined;
+  }
+
+  /** Retry a failed/stopped/timed_out/unavailable agent, re-spawning it with
+   *  its original run parameters. Returns undefined if the agent cannot be
+   *  retried (unknown, running, queued, or completed). */
+  async retry(agentId: string): Promise<AgentRunResult | undefined> {
+    const agent = this.agents.get(agentId);
+    if (!agent) return undefined;
+    if (
+      agent.status === "running" ||
+      agent.status === "queued" ||
+      agent.status === "completed"
+    ) {
+      return undefined;
+    }
+    return this.run({
+      task: agent.task,
+      cwd: agent.cwd,
+      model: agent.model,
+      systemPrompt: agent.systemPrompt,
+      timeoutMs: agent.timeoutMs,
+      name: agent.name,
+      runId: agent.runId,
+      parentId: agent.parentId,
+    });
   }
 
   /** UI-oriented list. */
