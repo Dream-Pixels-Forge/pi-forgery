@@ -1,7 +1,7 @@
 /**
  * pi-forgery — one-shot agent runner.
  *
- * Spawns a child Pi process (`pi --print "<task>"`), captures its JSONL
+ * Spawns a child Pi process (`pi --mode json "<task>"`), captures its JSONL
  * output, and parses the final assistant text + usage. Each run is
  * recorded in the activity store as an agent with observed status.
  *
@@ -179,7 +179,7 @@ export class AgentRunner {
     startedAt: number,
   ): Promise<AgentRunResult> {
     const timeoutMs = req.timeoutMs ?? 600_000;
-    const args = ["--print"];
+    const args = ["--mode", "json"];
     if (req.model) args.push("--model", req.model);
     const fullPrompt = req.systemPrompt ? `${req.systemPrompt}\n\n${req.task}` : req.task;
     args.push(fullPrompt);
@@ -219,12 +219,18 @@ export class AgentRunner {
         const finishedAt = Date.now();
         // Parse the final JSONL assistant message.
         const parsed = parsePiPrintJsonl(stdout);
+        const missingResult = code === 0 && parsed === undefined;
         const status: ForgeryAgentRecord["status"] =
-          code === 0 ? "completed" : agent.status === "timed_out" ? "timed_out" : "failed";
+          code === 0 && !missingResult ? "completed" : agent.status === "timed_out" ? "timed_out" : "failed";
+        const resultError = missingResult
+          ? "no assistant result in Pi JSON output"
+          : code === 0
+            ? undefined
+            : stderr.slice(0, 400) || `exit ${code}`;
         agent.status = status;
         agent.finishedAt = finishedAt;
         agent.text = parsed?.text ?? "";
-        agent.error = code === 0 ? undefined : stderr.slice(0, 200) || `exit ${code}`;
+        agent.error = resultError?.slice(0, 200);
         if (parsed?.usage) {
           agent.usage = parsed.usage;
         }
@@ -234,7 +240,7 @@ export class AgentRunner {
           status,
           text: parsed?.text ?? "",
           value: parsed?.value,
-          error: code === 0 ? undefined : stderr.slice(0, 400) || `exit ${code}`,
+          error: resultError,
           usage: parsed?.usage,
           startedAt,
           finishedAt,
@@ -263,11 +269,27 @@ export class AgentRunner {
 }
 
 /**
- * Parse the stdout of `pi --print` as a stream of JSONL. We extract:
+ * Parse the stdout of `pi --mode json` as a stream of JSONL. We extract:
  *   - the final assistant text
  *   - any structured value the agent returned (pi may emit a JSON payload)
  *   - usage
  */
+function parseUsage(raw: unknown): { input?: number; output?: number; cost?: number } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const usage = raw as Record<string, unknown>;
+  const rawCost = usage.cost;
+  const cost = typeof rawCost === "number"
+    ? rawCost
+    : rawCost && typeof rawCost === "object" && typeof (rawCost as Record<string, unknown>).total === "number"
+      ? (rawCost as Record<string, number>).total
+      : undefined;
+  return {
+    input: typeof usage.input === "number" ? usage.input : undefined,
+    output: typeof usage.output === "number" ? usage.output : undefined,
+    cost,
+  };
+}
+
 export function parsePiPrintJsonl(
   stdout: string,
 ): { text?: string; value?: unknown; usage?: { input?: number; output?: number; cost?: number } } | undefined {
@@ -282,21 +304,27 @@ export function parsePiPrintJsonl(
     } catch {
       continue;
     }
-    // Common pi --print shapes:
-    //   { "type": "assistant", "text": "...", "usage": {...} }
-    //   { "type": "result", "value": ..., "usage": {...} }
-    //   { "text": "..." }
+
+    if (obj.type === "message_end") {
+      const message = obj.message as Record<string, unknown> | undefined;
+      if (message?.role === "assistant") {
+        if (typeof message.content === "string") {
+          lastText = message.content;
+        } else if (Array.isArray(message.content)) {
+          lastText = message.content
+            .filter((part) => part && typeof part === "object" && (part as Record<string, unknown>).type === "text")
+            .map((part) => String((part as Record<string, unknown>).text ?? ""))
+            .join("\n");
+        }
+      }
+      lastUsage = parseUsage(message?.usage) ?? lastUsage;
+    }
+
+    lastUsage = parseUsage(obj.usage) ?? lastUsage;
+    // Keep support for the simple records accepted before JSON-mode events.
     if (typeof obj.text === "string") lastText = obj.text;
     if (obj.value !== undefined) lastValue = obj.value;
-    if (obj.usage && typeof obj.usage === "object") {
-      const u = obj.usage as Record<string, unknown>;
-      lastUsage = {
-        input: typeof u.input === "number" ? u.input : undefined,
-        output: typeof u.output === "number" ? u.output : undefined,
-        cost: typeof u.cost === "number" ? u.cost : undefined,
-      };
-    }
   }
-  if (!lastText && lastValue === undefined && !lastUsage) return undefined;
+  if (!lastText.trim() && lastValue === undefined) return undefined;
   return { text: lastText, value: lastValue, usage: lastUsage };
 }

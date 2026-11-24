@@ -499,7 +499,7 @@ export function makeRegistry(
       }
       
       return {
-        value: { id: result.id, status: result.status, text: result.text, usage: result.usage },
+        value: { id: result.id, status: result.status, text: result.text, value: result.value, usage: result.usage },
         preview: `${result.status} (${(result.text ?? "").slice(0, 40)})`,
         error: ok ? undefined : result.error ?? result.status,
       };
