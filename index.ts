@@ -82,7 +82,7 @@ export default function forgery(pi: ExtensionAPI): void {
   ensureSingletons();
 
   // ── tool ───────────────────────────────────────────────────────────────
-  const tool = createForgeryExecTool(store, runner);
+  const tool = createForgeryExecTool(store, runner, costManager);
   pi.registerTool(tool);
 
   // ── command ────────────────────────────────────────────────────────────

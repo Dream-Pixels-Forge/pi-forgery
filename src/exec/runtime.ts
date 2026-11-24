@@ -147,6 +147,7 @@ export function buildHostProxy(
   pi: Record<string, (...a: unknown[]) => Promise<unknown>>;
   agents: Record<string, (...a: unknown[]) => Promise<unknown>>;
   activity: Record<string, (...a: unknown[]) => Promise<unknown>>;
+  cost: Record<string, (...a: unknown[]) => Promise<unknown>>;
   planned: PlannedCall[];
 } {
   const planned: PlannedCall[] = [];
@@ -216,6 +217,7 @@ export function buildHostProxy(
     pi: make("pi"),
     agents: make("agents"),
     activity: make("activity"),
+    cost: make("cost"),
     planned,
   };
 }
@@ -260,7 +262,7 @@ export async function runProgram(
     }
   }
 
-  const { pi, agents, activity, planned } = buildHostProxy(registry, ctx, signal);
+  const { pi, agents, activity, cost, planned } = buildHostProxy(registry, ctx, signal);
 
   // Wrap the body in an async function so top-level `await` works and the
   // user can use `return` in their program body. `new Function` produces:
@@ -271,7 +273,7 @@ export async function runProgram(
   //     })();
   //   }
   const body = `\nreturn (async () => {\n"use strict";\n${code}\n})();\n`;
-  const factory: Function = new Function("pi", "agents", "activity", "__host", body);
+  const factory: Function = new Function("pi", "agents", "activity", "cost", "__host", body);
 
   const hostHandle = {
     registry,
@@ -280,9 +282,9 @@ export async function runProgram(
   };
 
   try {
-    const value = await factory(pi, agents, activity, hostHandle);
+    const value = await factory(pi, agents, activity, cost, hostHandle);
     if (signal.aborted) {
-      return { ok: false, error: "aborted" };
+      return { ok: false, error: typeof signal.reason === "string" ? signal.reason : "aborted" };
     }
     // Dry-run: return the planned call sequence instead of the program's value.
     if (ctx.dryRun) {

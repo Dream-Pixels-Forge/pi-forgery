@@ -135,8 +135,11 @@ export function makeRegistry(
   // Workflow chain — composes pipelines into sequential pipelines with gates.
   const workflowChain = new WorkflowChain(engine, activity);
 
+  // Share one manager for budget configuration, accounting, routing, and UI.
+  const costManagerParam = costManager ?? createCostManager(activity);
+
   // Enhanced agent runner for high-accuracy one-shot agents
-  const enhancedRunner = createEnhancedAgentRunner(runner);
+  const enhancedRunner = createEnhancedAgentRunner(runner, activity, costManagerParam);
 
   // Shared exec helper (node:child_process — `ctx.exec` is not part of the
   // public ExtensionContext API).
@@ -436,6 +439,9 @@ export function makeRegistry(
     execute: async (args, hctx, signal) => {
       const task = String(args.task ?? "");
       if (!task) return { error: "agents.run: task is required" };
+      if (costManagerParam.budgetStatus(hctx.runId).overHard) {
+        return { error: "agents.run: budget exceeded" };
+      }
 
       // Budget enforcement: check if running this agent would exceed cost/token limits
       try {
@@ -481,21 +487,24 @@ export function makeRegistry(
       if (agent) activity.addAgent(agent);
       const ok = result.status === "completed";
       
-      // Update activity with metrics from the agent run
       if (result.usage) {
-        const run = activity.get(hctx.runId);
-        if (run) {
-          // Initialize metrics if not present
-          if (!run.metrics) {
-            run.metrics = { toolCalls: 0, tokens: 0, cost: 0 };
-          }
-          // Accumulate usage from this agent run
-          // At this point, run.metrics is definitely defined
-          run.metrics.toolCalls += 1; // count agent run as one tool call? 
-          run.metrics.tokens += result.usage.output ?? 0; // Assuming output tokens
-          // Note: We don't have cost in the usage from runner.run, so we'll need to estimate
-          // For now, we'll leave cost as 0 or implement a rough estimation based on tokens
-        }
+        const model = args.model ? String(args.model) : "default";
+        const breakdown = costManagerParam.calculateCost(
+          model,
+          result.usage.input ?? 0,
+          result.usage.output ?? 0,
+          0,
+          0,
+          result.usage.cost,
+        );
+        costManagerParam.recordAgentCost({
+          agentId: result.id,
+          agentName: args.name ? String(args.name) : `agent · ${oneLine(task).slice(0, 32)}`,
+          template: "general",
+          model,
+          breakdown,
+          runId: hctx.runId,
+        });
       }
       
       return {
@@ -747,7 +756,7 @@ export function makeRegistry(
       const task = String(args.task ?? "");
       if (!task) return { error: "devloop.run: task is required" };
 
-      const loopRunner = new DevLoopRunner(runner, activity, hctx.cwd, hctx.runId);
+      const loopRunner = new DevLoopRunner(runner, activity, hctx.cwd, hctx.runId, costManagerParam);
       const result = await loopRunner.run(task, {
         maxLoopIterations: args.maxLoopIterations ? Number(args.maxLoopIterations) : 3,
         maxPhaseRetries: args.maxPhaseRetries ? Number(args.maxPhaseRetries) : 2,
@@ -773,7 +782,7 @@ export function makeRegistry(
   });
 
   // Individual phase runners for step-by-step control
-  const phaseRunners = createPhaseRunners(runner, activity, undefined as any, undefined as any);
+  const phaseRunners = createPhaseRunners(runner, activity, undefined as any, undefined as any, costManagerParam);
 
   for (const [phaseName, phaseRunner] of Object.entries({
     research: () => phaseRunners.research,
@@ -797,7 +806,7 @@ export function makeRegistry(
       kind: "agent",
       execute: async (args, hctx, _signal) => {
         // This is a simplified version - the real phase runners need the enhanced runner
-        const enhanced = new EnhancedAgentRunner(runner);
+        const enhanced = new EnhancedAgentRunner(runner, activity, costManagerParam);
         const task = String(args.task ?? "");
         if (!task) return { error: `devloop.${phaseName}: task is required` };
 
@@ -841,10 +850,6 @@ export function makeRegistry(
   }
 
   // ── Cost Management host calls ───────────────────────────────────────
-
-// Use the shared cost manager (created in index.ts), falling back to a
-// fresh one if none was provided (e.g. makeRegistry called standalone).
-const costManagerParam = costManager ?? createCostManager(activity);
 
 // Model routing intelligence — recommends cheapest model with
 // sufficient historical pass rate for a given task class.
@@ -1441,6 +1446,7 @@ const PARAMS = Type.Object({
 export function createForgeryExecTool(
   activity: ForgeryActivityStore,
   runner: AgentRunner,
+  costManager: CostManager = createCostManager(activity),
 ): ToolDefinition<typeof PARAMS, ForgeryExecDetails> {
   return defineTool({
     name: "forgery_exec",
@@ -1466,13 +1472,13 @@ export function createForgeryExecTool(
     ): Promise<AgentToolResult<ForgeryExecDetails>> {
       // Bind the live context to the registry for this execution.
       const liveCtx = ctx;
-      const registry = makeRegistry(runner, activity, liveCtx);
-
       const runId = params.runId ?? toolCallId;
+      const controlled = new AbortController();
+      const unregisterBudget = costManager.onBudgetExceeded(runId, () => controlled.abort("budget exceeded"));
+      const registry = makeRegistry(runner, activity, liveCtx, costManager);
       const hctx: HostExecCtx = { runId, activity, cwd: ctx.cwd };
 
       // Build a merged signal that aborts on host abort OR deadline.
-      const controlled = new AbortController();
       const hostAbort = () => controlled.abort();
       signal?.addEventListener("abort", hostAbort, { once: true });
       let timer: NodeJS.Timeout | undefined;
@@ -1486,6 +1492,7 @@ export function createForgeryExecTool(
       const outcome = await runForgery(params.code, registry, activity, hctx, mergedSignal, Boolean(params.dryRun));
 
       // Cleanup.
+      unregisterBudget();
       signal?.removeEventListener("abort", hostAbort);
       if (timer) clearTimeout(timer);
 

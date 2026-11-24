@@ -1009,9 +1009,9 @@ export class EnhancedAgentRunner {
   private baseRunner: AgentRunner;
   private costManager: CostManager;
 
-  constructor(baseRunner: AgentRunner, activity?: ForgeryActivityStore) {
+  constructor(baseRunner: AgentRunner, activity?: ForgeryActivityStore, costManager?: CostManager) {
     this.baseRunner = baseRunner;
-    this.costManager = createCostManager(activity);
+    this.costManager = costManager ?? createCostManager(activity);
   }
 
   /** Get the cost manager for external access */
@@ -1075,6 +1075,17 @@ export class EnhancedAgentRunner {
     let qualityGateFailures: string[] = [];
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (req.parentRunId && this.costManager.budgetStatus(req.parentRunId).overHard) {
+        return {
+          id,
+          status: "failed",
+          text: lastOutput,
+          error: "budget exceeded",
+          startedAt,
+          finishedAt: Date.now(),
+          attempts: attempt,
+        };
+      }
       attempts = attempt + 1;
 
       // Build task prompt with context and feedback
@@ -1097,7 +1108,10 @@ export class EnhancedAgentRunner {
         const breakdown = this.costManager.calculateCost(
           model,
           baseResult.usage.input ?? 0,
-          baseResult.usage.output ?? 0
+          baseResult.usage.output ?? 0,
+          0,
+          0,
+          baseResult.usage.cost,
         );
         this.costManager.recordAgentCost({
           agentId: baseResult.id,
@@ -1308,8 +1322,12 @@ ${JSON.stringify(schema, null, 2)}`);
 // ============================================================================
 
 /** Create an enhanced agent runner wrapping the base runner. */
-export function createEnhancedAgentRunner(baseRunner: AgentRunner): EnhancedAgentRunner {
-  return new EnhancedAgentRunner(baseRunner);
+export function createEnhancedAgentRunner(
+  baseRunner: AgentRunner,
+  activity?: ForgeryActivityStore,
+  costManager?: CostManager,
+): EnhancedAgentRunner {
+  return new EnhancedAgentRunner(baseRunner, activity, costManager);
 }
 
 // ============================================================================

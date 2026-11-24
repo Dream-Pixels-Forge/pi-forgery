@@ -8,6 +8,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ForgeryActivityStore } from "../src/activity/store.js";
 import { CostManager, createCostManager } from "../src/agents/cost-manager.js";
+import type { AgentRunner, AgentRunResult } from "../src/agents/runner.js";
+import { createEnhancedAgentRunner } from "../src/agents/enhanced-runner.js";
+import { DevLoopRunner } from "../src/agents/dev-loop.js";
+import { createForgeryExecTool } from "../src/exec/tool.js";
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -223,4 +227,88 @@ test("budgetStatus: unknown run → zeros", () => {
   assert.equal(bs.pctUsed, 0);
   assert.equal(bs.overSoft, false);
   assert.equal(bs.overHard, false);
+});
+
+test("calculateCost uses provider-reported total when present", () => {
+  const manager = createCostManager();
+  const breakdown = manager.calculateCost("default", 1_000, 1_000, 0, 0, 0.001);
+  assert.equal(breakdown.totalCost, 0.001);
+});
+
+test("hard-budget callback fires when recorded costs cross the limit", () => {
+  const store = new ForgeryActivityStore();
+  const manager = createCostManager(store);
+  store.start("run-1");
+  manager.setBudget("run-1", { maxCostPerRun: 0.10 });
+  let calls = 0;
+  manager.onBudgetExceeded("run-1", () => { calls += 1; });
+
+  manager.recordAgentCost({
+    agentId: "agent-1",
+    agentName: "expensive",
+    model: "default",
+    breakdown: {
+      inputTokens: 1,
+      outputTokens: 1,
+      inputCost: 0,
+      outputCost: 0.20,
+      totalCost: 0.20,
+      model: "default",
+    },
+    runId: "run-1",
+  });
+
+  assert.equal(calls, 1);
+  assert.equal(manager.budgetStatus("run-1").overHard, true);
+});
+
+test("shared cost manager is injected into enhanced and dev-loop runners", () => {
+  const store = new ForgeryActivityStore();
+  const manager = createCostManager(store);
+  const runner = {} as AgentRunner;
+  const enhanced = createEnhancedAgentRunner(runner, store, manager);
+  assert.equal(enhanced.getCostManager(), manager);
+
+  const loop = new DevLoopRunner(runner, store, ".", "run-1", manager);
+  assert.equal((loop as any).enhancedRunner.getCostManager(), manager);
+});
+
+test("forgery_exec aborts at hard budget and prevents the next spawn", async () => {
+  const store = new ForgeryActivityStore();
+  const manager = createCostManager(store);
+  let spawnCount = 0;
+  const runner = {
+    async run(): Promise<AgentRunResult> {
+      spawnCount += 1;
+      return {
+        id: `agent-${spawnCount}`,
+        status: "completed",
+        text: "done",
+        usage: { input: 10, output: 5, cost: 0.20 },
+        startedAt: 1,
+        finishedAt: 2,
+      };
+    },
+    get() { return undefined; },
+  } as unknown as AgentRunner;
+  const tool = createForgeryExecTool(store, runner, manager);
+  const code = `
+    await cost.budget({ maxCostPerRun: 0.10 });
+    await agents.run({ task: "first expensive agent" });
+    await agents.run({ task: "must not spawn" });
+    return "unexpected success";
+  `;
+
+  const result = await tool.execute(
+    "call-budget",
+    { code },
+    new AbortController().signal,
+    undefined,
+    { cwd: ".", ui: { setStatus() {} } } as any,
+  );
+
+  assert.equal(result.details?.ok, false);
+  assert.match(result.details?.error ?? "", /budget exceeded/i);
+  assert.equal(spawnCount, 1);
+  assert.equal(manager.getRunCost("call-budget")?.totalCost, 0.20);
 });

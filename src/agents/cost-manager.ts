@@ -114,6 +114,7 @@ export class CostManager {
   private runCosts: Map<string, RunCostSummary> = new Map();
   private agentCosts: AgentCostRecord[] = [];
   private budgets: Map<string, CostBudget> = new Map();
+  private budgetAbortHandlers: Map<string, () => void> = new Map();
   private activity?: ForgeryActivityStore;
 
   constructor(pricing?: ModelPricingMap, activity?: ForgeryActivityStore) {
@@ -148,7 +149,8 @@ export class CostManager {
     inputTokens: number,
     outputTokens: number,
     cacheReadTokens = 0,
-    cacheWriteTokens = 0
+    cacheWriteTokens = 0,
+    reportedTotalCost?: number,
   ): CostBreakdown {
     const pricing = this.getModelPricing(model);
     
@@ -170,7 +172,8 @@ export class CostManager {
       outputCost,
       cacheReadCost: cacheReadCost || undefined,
       cacheWriteCost: cacheWriteCost || undefined,
-      totalCost: inputCost + outputCost + cacheReadCost + cacheWriteCost,
+      // Provider totals are authoritative; per-token components are estimates.
+      totalCost: reportedTotalCost ?? inputCost + outputCost + cacheReadCost + cacheWriteCost,
       model,
     };
   }
@@ -226,7 +229,21 @@ export class CostManager {
       }
     }
 
+    if (record.runId && this.runCosts.get(record.runId)?.budgetStatus === "exceeded") {
+      this.budgetAbortHandlers.get(record.runId)?.();
+    }
+
     return fullRecord;
+  }
+
+  /** Register an abort callback for the current run's hard limit. */
+  onBudgetExceeded(runId: string, handler: () => void): () => void {
+    this.budgetAbortHandlers.set(runId, handler);
+    return () => {
+      if (this.budgetAbortHandlers.get(runId) === handler) {
+        this.budgetAbortHandlers.delete(runId);
+      }
+    };
   }
 
   /**
@@ -282,6 +299,9 @@ export class CostManager {
       run.budgetStatus = this.checkBudget(run);
     }
     this.budgets.set(runId, budget);
+    if (this.runCosts.get(runId)?.budgetStatus === "exceeded") {
+      this.budgetAbortHandlers.get(runId)?.();
+    }
   }
 
   /**

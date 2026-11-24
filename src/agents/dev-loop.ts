@@ -9,6 +9,7 @@
 import { EnhancedAgentRunner, type EnhancedAgentRunRequest, type EnhancedAgentRunResult, type AgentTemplate } from "./enhanced-runner";
 import { AgentRunner } from "./runner";
 import { ForgeryActivityStore } from "../activity/store";
+import type { CostManager } from "./cost-manager";
 
 export interface DevLoopConfig {
   /** Maximum iterations for the full loop (default: 3) */
@@ -78,13 +79,14 @@ export class DevLoopRunner {
     baseRunner: AgentRunner,
     activity: ForgeryActivityStore,
     cwd: string,
-    parentRunId: string
+    parentRunId: string,
+    costManager?: CostManager,
   ) {
     this.baseRunner = baseRunner;
     this.activity = activity;
     this.cwd = cwd;
     this.parentRunId = parentRunId;
-    this.enhancedRunner = new EnhancedAgentRunner(baseRunner);
+    this.enhancedRunner = new EnhancedAgentRunner(baseRunner, activity, costManager);
   }
 
   /**
@@ -160,6 +162,7 @@ export class DevLoopRunner {
           
           // Track metrics
           if (phaseResult.usage?.output) totalTokens += phaseResult.usage.output;
+          totalCost += phaseResult.usage?.cost ?? 0;
           
           // Evaluate phase quality
           const quality = this.#evaluatePhaseQuality(phase, phaseResult);
@@ -598,9 +601,10 @@ export function createPhaseRunners(
   baseRunner: AgentRunner,
   activity: ForgeryActivityStore,
   cwd: string,
-  parentRunId: string
+  parentRunId: string,
+  costManager?: CostManager,
 ): PhaseRunner {
-  const enhanced = new EnhancedAgentRunner(baseRunner);
+  const enhanced = new EnhancedAgentRunner(baseRunner, activity, costManager);
 
   const runPhase = async (template: AgentTemplate, task: string, name: string) => {
     return enhanced.runEnhanced({
