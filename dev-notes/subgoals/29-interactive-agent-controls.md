@@ -1,6 +1,6 @@
 # SG-29 — Interactive Agent Controls in Dashboard (`stop`, `retry`, `filter`)
 
-- **Status:** planned
+- **Status:** done
 - **Priority:** P1
 - **Area:** `src/ui/dashboard.ts`, `src/agents/runner.ts`, `src/exec/runtime.ts`
 
