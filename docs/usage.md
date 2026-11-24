@@ -24,6 +24,14 @@ return {
 Independent calls run in parallel. `agents.run` spawns one-shot Pi
 subprocesses for tasks that need their own context.
 
+## Dry-run and trusted code
+
+`dryRun: true` executes the program's control flow but skips registered host
+calls and activity-store writes. It returns the planned calls plus a warning.
+It is **not a sandbox**: Node globals such as `process` and dynamic imports
+remain available, so arbitrary side effects are still possible. Use dry-run
+only with code you trust to execute.
+
 ## Terminal media display
 
 ### Images

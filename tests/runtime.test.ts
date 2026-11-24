@@ -223,6 +223,16 @@ test("runForgery: dry-run does not mutate the activity store", async () => {
   assert.equal(store.runs().length, 0);
 });
 
+test("runForgery: dry-run warns that program code still executes", async () => {
+  const reg = new HostCallRegistry();
+  const store = new ForgeryActivityStore();
+  const ctx: HostExecCtx = { runId: "run-1", activity: store, cwd: "." };
+  const result = await runForgery(`return "planned";`, reg, store, ctx, new AbortController().signal, true);
+  assert.equal(result.ok, true);
+  assert.match(String((result.value as any).warning), /code executes.*registered host calls/i);
+  assert.match(String((result.value as any).warning), /globals.*dynamic imports/i);
+});
+
 test("runForgery: default (non-dry-run) behavior unchanged", async () => {
   let executeCalls = 0;
   const reg = new HostCallRegistry();
