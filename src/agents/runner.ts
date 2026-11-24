@@ -57,6 +57,7 @@ export class AgentRunner {
   private listeners: Set<() => void> = new Set();
   private agents: Map<string, ForgeryAgentRecord> = new Map();
   private queue: Promise<void> = Promise.resolve();
+  private terminationTimers: Map<string, NodeJS.Timeout> = new Map();
   private readonly maxConcurrent: number;
 
   constructor(options: { piBinary?: string; maxConcurrent?: number } = {}) {
@@ -82,7 +83,7 @@ export class AgentRunner {
   }
 
   /** Run a one-shot agent. Awaits completion (or timeout). */
-  async run(req: AgentRunRequest): Promise<AgentRunResult> {
+  async run(req: AgentRunRequest, signal?: AbortSignal): Promise<AgentRunResult> {
     const id = randomUUID();
     const startedAt = Date.now();
     const agent: ForgeryAgentRecord = {
@@ -101,6 +102,20 @@ export class AgentRunner {
     // Serialize with bounded concurrency.
     const prior = this.queue;
     const slot = prior.then(async () => {
+      if (signal?.aborted) {
+        agent.status = "stopped";
+        agent.error = "aborted";
+        agent.finishedAt = Date.now();
+        this.notify();
+        return {
+          id,
+          status: "stopped" as const,
+          text: "",
+          error: agent.error,
+          startedAt,
+          finishedAt: agent.finishedAt,
+        };
+      }
       agent.status = "running";
       agent.updatedAt = Date.now();
       this.notify();
@@ -121,7 +136,7 @@ export class AgentRunner {
         };
       }
 
-      return this.#spawn(id, req, agent, startedAt);
+      return this.#spawn(id, req, agent, startedAt, signal);
     });
     this.queue = slot.then(
       () => undefined,
@@ -136,13 +151,14 @@ export class AgentRunner {
   stop(agentId: string): AgentRunResult | undefined {
     const child = this.state.running.get(agentId);
     if (child) {
-      child.kill("SIGTERM");
       const agent = this.agents.get(agentId);
       if (agent) {
         agent.status = "stopped";
+        agent.error = "stopped by request";
         agent.finishedAt = Date.now();
         this.notify();
       }
+      this.#terminate(agentId, child);
       this.state.running.delete(agentId);
       return {
         id: agentId,
@@ -172,11 +188,29 @@ export class AgentRunner {
     return this.piBinary.length > 0;
   }
 
+  #terminate(agentId: string, child: ChildProcess): void {
+    child.kill("SIGTERM");
+    const existing = this.terminationTimers.get(agentId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      if (child.exitCode === null) child.kill("SIGKILL");
+    }, 100);
+    timer.unref?.();
+    this.terminationTimers.set(agentId, timer);
+  }
+
+  #clearTermination(agentId: string): void {
+    const timer = this.terminationTimers.get(agentId);
+    if (timer) clearTimeout(timer);
+    this.terminationTimers.delete(agentId);
+  }
+
   async #spawn(
     agentId: string,
     req: AgentRunRequest,
     agent: ForgeryAgentRecord,
     startedAt: number,
+    signal?: AbortSignal,
   ): Promise<AgentRunResult> {
     const timeoutMs = req.timeoutMs ?? 600_000;
     const args = ["--mode", "json"];
@@ -202,31 +236,53 @@ export class AgentRunner {
     });
 
     const timer = setTimeout(() => {
-      if (child.exitCode === null) {
+      if (child.exitCode === null && agent.status === "running") {
         agent.status = "timed_out";
         agent.error = `timed out after ${timeoutMs / 1000}s`;
         agent.finishedAt = Date.now();
-        child.kill("SIGTERM");
+        this.#terminate(agentId, child);
         this.state.running.delete(agentId);
         this.notify();
       }
     }, timeoutMs);
+    const onAbort = () => {
+      if (child.exitCode === null && agent.status === "running") {
+        agent.status = "stopped";
+        agent.error = "aborted";
+        agent.finishedAt = Date.now();
+        this.#terminate(agentId, child);
+        this.state.running.delete(agentId);
+        this.notify();
+      }
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     const result = await new Promise<AgentRunResult>((resolve) => {
       child.on("close", (code) => {
         clearTimeout(timer);
+        this.#clearTermination(agentId);
+        signal?.removeEventListener("abort", onAbort);
         this.state.running.delete(agentId);
         const finishedAt = Date.now();
         // Parse the final JSONL assistant message.
         const parsed = parsePiPrintJsonl(stdout);
         const missingResult = code === 0 && parsed === undefined;
         const status: ForgeryAgentRecord["status"] =
-          code === 0 && !missingResult ? "completed" : agent.status === "timed_out" ? "timed_out" : "failed";
-        const resultError = missingResult
-          ? "no assistant result in Pi JSON output"
-          : code === 0
-            ? undefined
-            : stderr.slice(0, 400) || `exit ${code}`;
+          agent.status === "timed_out" || agent.status === "stopped"
+            ? agent.status
+            : code === 0 && !missingResult
+              ? "completed"
+              : "failed";
+        const resultError = status === "timed_out" || status === "stopped"
+          ? agent.error
+          : missingResult
+            ? "no assistant result in Pi JSON output"
+            : code === 0
+              ? undefined
+              : stderr.slice(0, 400) || `exit ${code}`;
         agent.status = status;
         agent.finishedAt = finishedAt;
         agent.text = parsed?.text ?? "";
@@ -248,6 +304,8 @@ export class AgentRunner {
       });
       child.on("error", (err) => {
         clearTimeout(timer);
+        this.#clearTermination(agentId);
+        signal?.removeEventListener("abort", onAbort);
         this.state.running.delete(agentId);
         agent.status = "failed";
         agent.error = err.message;
