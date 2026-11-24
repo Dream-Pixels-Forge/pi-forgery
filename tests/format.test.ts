@@ -219,7 +219,8 @@ test("summarizeStatus: active run aggregates metrics + elapsed", () => {
   const store = new ForgeryActivityStore();
   store.start("run-1", { name: "demo" });
   const snap = store.snapshot();
-  const fixed = () => snap.now + 5_000;
+  const startedAt = store.get("run-1")!.startedAt;
+  const fixed = () => startedAt + 5_000;
   const summary = summarizeStatus(snap, fixed);
   assert.equal(summary.active, true);
   assert.equal(summary.label, "demo");
