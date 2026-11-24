@@ -81,10 +81,10 @@ export class WorkflowChain {
   private store: ForgeryActivityStore;
   private journal: WorkflowJournal;
 
-  constructor(engine: WorkflowEngine, store: ForgeryActivityStore) {
+  constructor(engine: WorkflowEngine, store: ForgeryActivityStore, journalDir?: string) {
     this.engine = engine;
     this.store = store;
-    this.journal = new WorkflowJournal();
+    this.journal = new WorkflowJournal(journalDir);
   }
 
   async run(steps: ChainStep[], chainRunId?: string): Promise<ChainResult> {

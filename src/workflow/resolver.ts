@@ -48,6 +48,7 @@ export class WorkflowResolver {
     private readonly runner: AgentRunner,
     private readonly cwd: string,
     private readonly engine: WorkflowEngine,
+    private readonly reportDir = RESOLVER_REPORT_DIR,
   ) {}
 
   /** Resolve findings against a drift-report run. */
@@ -112,7 +113,7 @@ export class WorkflowResolver {
     }
 
     // Write goldfish_review_report.md
-    const reportDir = join(RESOLVER_REPORT_DIR, input.runId);
+    const reportDir = join(this.reportDir, input.runId);
     mkdirSync(reportDir, { recursive: true });
     const reportPath = join(reportDir, "goldfish_review_report.md");
     writeFileSync(reportPath, reportLines.join("\n"), "utf8");

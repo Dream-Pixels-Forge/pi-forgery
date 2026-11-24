@@ -1,5 +1,12 @@
 # DECISIONS.md — pi-forgery
 
+## 2026-11-24: PR #18 test cwd isolation is process-safe
+- **Conflict:** An independent reviewer flagged module-level `process.chdir(TEST_ROOT)` as a possible cross-file race in workflow tests.
+- **Evidence:** Node.js documents process isolation as the default: each test file executes in its own child process, including concurrent test runs. Each affected file also restores its original cwd in `test.after`; the full suite and real-state sentinel check pass.
+- **Decision:** Dismiss the finding for the supported `tsx --test tests/*.test.ts` command. A fresh independent re-review returned `APPROVED`; no production change required.
+- **Source:** https://nodejs.org/api/test.html#test-runner-execution-model
+- **Decided by:** independent re-review + orchestrator evidence check.
+
 ## 2026-06-15: Local DPF extension layout (not a compiled dist layout)
 - **Decision:** Extend `extensions/forgery/index.ts` as the entry, with its
   own `package.json` declaring `pi.extensions: ["./index.ts"]` and the
